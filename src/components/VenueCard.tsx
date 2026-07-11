@@ -257,6 +257,15 @@ export function VenueCard({
     venueName={venue.name}
   />
 )}
+
+{enrichData?.venueId && (
+  <a
+    href={`/reserve/${enrichData.venueId}`}
+    className="rounded-lg bg-violet-600 px-3 py-2 text-sm font-medium text-white hover:bg-violet-500"
+  >
+    Reserve desk
+  </a>
+)}
         </div>
       </div>
     </div>

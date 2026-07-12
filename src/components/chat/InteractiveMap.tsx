@@ -45,8 +45,11 @@ export default function InteractiveMap({ markers }: { markers: any[] }) {
       } else {
         const centerLat = groupItems[0].lat;
         const centerLng = groupItems[0].lng;
-        // 0.00015 degrees is approx 15 meters
-        const radius = 0.00015;
+        // Base radius of ~200 meters to visually separate markers at default zoom
+        const baseRadius = 0.002;
+        // Expand slightly if many markers share the location
+        const radius = baseRadius + (0.0002 * n);
+        
         groupItems.forEach((item, index) => {
           const angle = (2 * Math.PI * index) / n;
           const offsetLat = centerLat + radius * Math.cos(angle);

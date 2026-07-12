@@ -227,8 +227,11 @@ const Map = ({
       } else {
         const centerLat = Number(groupItems[0].position.lat);
         const centerLng = Number(groupItems[0].position.lng);
-        // 0.00015 degrees is approx 15 meters
-        const radius = 0.00015;
+        // Base radius of ~200 meters to visually separate markers at default zoom
+        const baseRadius = 0.002;
+        // Expand slightly if many markers share the location
+        const radius = baseRadius + (0.0002 * n);
+        
         groupItems.forEach((item, index) => {
           const angle = (2 * Math.PI * index) / n;
           const offsetLat = centerLat + radius * Math.cos(angle);

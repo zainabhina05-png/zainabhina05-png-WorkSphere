@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { ensureUserExists } from "@/lib/auth";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { drawSafeText, safeText, bookingsToCSV } from "@/lib/pdfHelpers";
+import { resolveDateRange, filterBookingsByRange } from "@/lib/taxExport";
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,27 +14,48 @@ export async function POST(req: NextRequest) {
     }
     await ensureUserExists(userId);
 
-    const { bookingIds, format } = await req.json();
+    const body = await req.json();
+    const { bookingIds, format, taxYear, startDate, endDate } = body;
 
-    if (!Array.isArray(bookingIds) || bookingIds.length === 0) {
-      return NextResponse.json(
-        { error: "No bookings selected" },
-        { status: 400 },
-      );
-    }
     if (format !== "pdf" && format !== "csv") {
       return NextResponse.json({ error: "Invalid format" }, { status: 400 });
     }
 
-    // Only fetch bookings that belong to this user - never trust client-supplied ownership
-    const bookings = await (prisma as any).booking.findMany({
-      where: {
-        id: { in: bookingIds },
-        userId,
-      },
-      include: { venue: true, user: true },
-      orderBy: { createdAt: "desc" },
-    });
+    const usingDateRange = !bookingIds && (taxYear || (startDate && endDate));
+
+    if (!Array.isArray(bookingIds) && !usingDateRange) {
+      return NextResponse.json(
+        { error: "Provide either bookingIds or a taxYear/date range" },
+        { status: 400 },
+      );
+    }
+
+    let bookings;
+
+    if (Array.isArray(bookingIds) && bookingIds.length > 0) {
+      // Only fetch bookings that belong to this user - never trust client-supplied ownership
+      bookings = await (prisma as any).booking.findMany({
+        where: { id: { in: bookingIds }, userId },
+        include: { venue: true, user: true },
+        orderBy: { createdAt: "desc" },
+      });
+    } else {
+      // Date-range / tax-year path (issue #198)
+      let range;
+      try {
+        range = resolveDateRange({ taxYear, startDate, endDate });
+      } catch (err: any) {
+        return NextResponse.json({ error: err.message }, { status: 400 });
+      }
+
+      const allUserBookings = await (prisma as any).booking.findMany({
+        where: { userId },
+        include: { venue: true, user: true },
+        orderBy: { createdAt: "desc" },
+      });
+
+      bookings = filterBookingsByRange(allUserBookings, range);
+    }
 
     if (bookings.length === 0) {
       return NextResponse.json(
@@ -43,12 +65,14 @@ export async function POST(req: NextRequest) {
     }
 
     if (format === "csv") {
-      const csv = bookingsToCSV(bookings);
+      const csv =
+        "Estimate only - $15/hr flat rate, 8% flat tax - verify against your invoices\n" +
+        bookingsToCSV(bookings);
       return new NextResponse(csv, {
         status: 200,
         headers: {
           "Content-Type": "text/csv",
-          "Content-Disposition": `attachment; filename="WorkSphere_Expenses_${Date.now()}.csv"`,
+          "Content-Disposition": `attachment; filename="WorkSphere_Tax_Export_${Date.now()}.csv"`,
           "Cache-Control": "no-cache",
         },
       });
@@ -87,6 +111,12 @@ export async function POST(req: NextRequest) {
       font,
       color: rgb(0.5, 0.5, 0.5),
     });
+    y -= 12;
+    drawSafeText(
+      summaryPage,
+      "ESTIMATE ONLY - $15/HR FLAT RATE, 8% FLAT TAX - VERIFY AGAINST YOUR INVOICES",
+      { x: 50, y, size: 7, font, color: rgb(0.6, 0.2, 0.2) },
+    );
     y -= 50;
 
     drawSafeText(summaryPage, `TOTAL BOOKINGS: ${bookings.length}`, {
@@ -296,7 +326,7 @@ export async function POST(req: NextRequest) {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="WorkSphere_Expenses_${Date.now()}.pdf"`,
+        "Content-Disposition": `attachment; filename="WorkSphere_Tax_Export_${Date.now()}.pdf"`,
         "Cache-Control": "no-cache",
       },
     });

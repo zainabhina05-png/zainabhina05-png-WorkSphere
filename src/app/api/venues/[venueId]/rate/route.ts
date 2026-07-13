@@ -39,6 +39,10 @@ export async function POST(
       hasErgonomic,
       outletDensity,
       wifiSpeed,
+      downloadSpeed,
+      uploadSpeed,
+      latency,
+      crowdLevel,
       speedtestPhoto,
       hasPhoneBooths,
       hasNoMusic,
@@ -88,6 +92,10 @@ export async function POST(
         hasErgonomic,
         outletDensity,
         wifiSpeed,
+        downloadSpeed: downloadSpeed || null,
+        uploadSpeed: uploadSpeed || null,
+        latency: latency || null,
+        crowdLevel: crowdLevel || null,
         comment,
         speedtestPhoto,
         hasPhoneBooths,
@@ -108,6 +116,10 @@ export async function POST(
         hasErgonomic: hasErgonomic || false,
         outletDensity: outletDensity || "none",
         wifiSpeed: wifiSpeed || null,
+        downloadSpeed: downloadSpeed || null,
+        uploadSpeed: uploadSpeed || null,
+        latency: latency || null,
+        crowdLevel: crowdLevel || null,
         comment,
         speedtestPhoto,
         hasPhoneBooths: hasPhoneBooths || false,
@@ -117,6 +129,20 @@ export async function POST(
         musicStyle,
         powerTypes: powerTypes || [],
       },
+    });
+
+    // Create WifiTelemetry entry if all speed/latency/crowd data is provided
+    if (downloadSpeed && uploadSpeed && latency && crowdLevel) {
+      await prisma.wifiTelemetry.create({
+        data: {
+          venueId: finalVenueId,
+          download: downloadSpeed,
+          upload: uploadSpeed,
+          latency: latency,
+          crowdLevel: crowdLevel,
+        },
+      });
+    }
     });
 
     // Update venue with new averages

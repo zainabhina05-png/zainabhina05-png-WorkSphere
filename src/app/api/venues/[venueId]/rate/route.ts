@@ -143,7 +143,6 @@ export async function POST(
         },
       });
     }
-    });
 
     // Update venue with new averages
     const allRatings = await prisma.venueRating.findMany({

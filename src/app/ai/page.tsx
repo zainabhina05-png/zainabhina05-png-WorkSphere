@@ -150,35 +150,52 @@ function AppPage() {
 
       // Try browser geolocation first
       if ("geolocation" in navigator) {
-        navigator.geolocation.getCurrentPosition(
-          (position) => {
-            setLocation({
-              latitude: position.coords.latitude,
-              longitude: position.coords.longitude,
-            });
-            setIsLoadingLocation(false);
-          },
-          async (error) => {
-            console.warn("Geolocation error:", error);
-            // Fallback to IP-based location API
-            try {
-              const response = await fetch("/api/location");
-              if (response.ok) {
-                const data = await response.json();
-                setLocation({ latitude: data.lat, longitude: data.lng });
-                console.log(`[Location] Using ${data.source}: ${data.city}, ${data.region}`);
-              } else {
-                throw new Error("Location API failed");
+        try {
+          navigator.geolocation.getCurrentPosition(
+            (position) => {
+              setLocation({
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+              });
+              setIsLoadingLocation(false);
+            },
+            async (error) => {
+              console.warn("Geolocation error:", error);
+              // Fallback to IP-based location API
+              try {
+                const response = await fetch("/api/location");
+                if (response.ok) {
+                  const data = await response.json();
+                  setLocation({ latitude: data.lat, longitude: data.lng });
+                  console.log(`[Location] Using ${data.source}: ${data.city}, ${data.region}`);
+                } else {
+                  throw new Error("Location API failed");
+                }
+              } catch (apiError) {
+                console.error("Location API error:", apiError);
+                // Ultimate fallback to San Francisco
+                setLocation({ latitude: 37.7749, longitude: -122.4194 });
               }
-            } catch (apiError) {
-              console.error("Location API error:", apiError);
-              // Ultimate fallback to San Francisco
+              setIsLoadingLocation(false);
+            },
+            { timeout: 5000, enableHighAccuracy: false }
+          );
+        } catch (err) {
+          console.warn("Geolocation synchronous error on mount:", err);
+          // Fallback to IP-based location API
+          try {
+            const response = await fetch("/api/location");
+            if (response.ok) {
+              const data = await response.json();
+              setLocation({ latitude: data.lat, longitude: data.lng });
+            } else {
               setLocation({ latitude: 37.7749, longitude: -122.4194 });
             }
-            setIsLoadingLocation(false);
-          },
-          { timeout: 5000, enableHighAccuracy: false }
-        );
+          } catch {
+            setLocation({ latitude: 37.7749, longitude: -122.4194 });
+          }
+          setIsLoadingLocation(false);
+        }
       } else {
         // No geolocation support - use API fallback
         try {
@@ -330,37 +347,56 @@ function AppPage() {
 
           // Try browser geolocation first to check permissions/availability on demand
           if ("geolocation" in navigator) {
-            navigator.geolocation.getCurrentPosition(
-              (position) => {
-                const preciseLoc = { lat: position.coords.latitude, lng: position.coords.longitude };
-                setLocation({ latitude: preciseLoc.lat, longitude: preciseLoc.lng });
-                executeRoute(preciseLoc);
-              },
-              (error) => {
-                console.warn("Geolocation failed or blocked during directions request:", error);
-                
-                // Catch geolocation permission errors and display the toast
-                setToast({
-                  message: "Location access denied. Fallback: using map viewport center.",
-                  type: "warning"
-                });
+            try {
+              navigator.geolocation.getCurrentPosition(
+                (position) => {
+                  const preciseLoc = { lat: position.coords.latitude, lng: position.coords.longitude };
+                  setLocation({ latitude: preciseLoc.lat, longitude: preciseLoc.lng });
+                  executeRoute(preciseLoc);
+                },
+                (error) => {
+                  console.warn("Geolocation failed or blocked during directions request:", error);
+                  
+                  // Catch geolocation permission errors and display the toast
+                  setToast({
+                    message: "Location access denied. Fallback: using map viewport center.",
+                    type: "warning"
+                  });
 
-                // Robust fallback parsing
-                let fallbackLoc = { lat: 37.7749, lng: -122.4194 }; // Default SF
-                
-                if (mapView?.center && typeof mapView.center.lat === 'number') {
-                  fallbackLoc = mapView.center;
-                } else if (mapView?.center && 'latitude' in mapView.center && typeof (mapView.center as any).latitude === 'number') {
-                  // Catch AI sending latitude instead of lat
-                  fallbackLoc = { lat: (mapView.center as any).latitude, lng: (mapView.center as any).longitude };
-                } else if (location && typeof location.latitude === 'number') {
-                  fallbackLoc = { lat: location.latitude, lng: location.longitude };
-                }
-                
-                executeRoute(fallbackLoc);
-              },
-              { timeout: 5000, enableHighAccuracy: false }
-            );
+                  // Fallback to center of current map viewport, or location state, or default SF
+                  let fallbackLoc = { lat: 37.7749, lng: -122.4194 }; // Default SF
+                  
+                  if (mapView?.center && typeof mapView.center.lat === 'number') {
+                    fallbackLoc = mapView.center;
+                  } else if (mapView?.center && 'latitude' in mapView.center && typeof (mapView.center as any).latitude === 'number') {
+                    // Catch AI sending latitude instead of lat
+                    fallbackLoc = { lat: (mapView.center as any).latitude, lng: (mapView.center as any).longitude };
+                  } else if (location && typeof location.latitude === 'number') {
+                    fallbackLoc = { lat: location.latitude, lng: location.longitude };
+                  }
+                  
+                  executeRoute(fallbackLoc);
+                },
+                { timeout: 5000, enableHighAccuracy: false }
+              );
+            } catch (err) {
+              console.warn("Geolocation synchronous error during directions request:", err);
+              setToast({
+                message: "Location access blocked. Fallback: using map viewport center.",
+                type: "warning"
+              });
+              let fallbackLoc = { lat: 37.7749, lng: -122.4194 }; // Default SF
+              
+              if (mapView?.center && typeof mapView.center.lat === 'number') {
+                fallbackLoc = mapView.center;
+              } else if (mapView?.center && 'latitude' in mapView.center && typeof (mapView.center as any).latitude === 'number') {
+                fallbackLoc = { lat: (mapView.center as any).latitude, lng: (mapView.center as any).longitude };
+              } else if (location && typeof location.latitude === 'number') {
+                fallbackLoc = { lat: location.latitude, lng: location.longitude };
+              }
+              
+              executeRoute(fallbackLoc);
+            }
           } else {
             // Fallback for browsers without geolocation support
             let fallbackLoc = { lat: 37.7749, lng: -122.4194 }; // Default SF
@@ -524,7 +560,10 @@ function AppPage() {
           <ChatErrorBoundary>
             <EnhancedChatbot
               roomId={sessionId}
+
+
               onShowToast={(msg) => setToast({ message: msg, type: "warning" })}
+
               onMapUpdate={(update) => {
                 handleMapUpdate(update as MapUpdateData);
                 // Auto-switch to map on mobile when markers are added
@@ -552,7 +591,9 @@ function AppPage() {
                   score: v.score
                 });
               }}
-              onBook={() => {
+
+              onBook={(v) => {
+                console.log("[Booking] Initiated for:", v.name);
                 // Handled internally by EnhancedChatbot now
               }}
               userLocation={

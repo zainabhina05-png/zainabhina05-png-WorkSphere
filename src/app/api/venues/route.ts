@@ -30,16 +30,21 @@ export async function GET(req: NextRequest) {
       hasPhoneBooths: searchParams.get("hasPhoneBooths"),
       hasNoMusic: searchParams.get("hasNoMusic"),
       hasQuietZone: searchParams.get("hasQuietZone"),
+      lighting: searchParams.get("lighting"),
       petsAllowedIndoors: searchParams.get("petsAllowedIndoors"),
       patioOnly: searchParams.get("patioOnly"),
       waterBowlsProvided: searchParams.get("waterBowlsProvided"),
+      singleOriginBeans: searchParams.get("singleOriginBeans"),
+      specialtyEspresso: searchParams.get("specialtyEspresso"),
+      oatAlmondMilk: searchParams.get("oatAlmondMilk"),
+      pourOverAvailable: searchParams.get("pourOverAvailable"),
     });
 
     if (!validation.success) {
       return NextResponse.json({ error: validation.error }, { status: 400 });
     }
 
-    const { lat, lng, radius, category, wifi, outlets, quiet, ergonomic, outletDensity, wifiSpeedBand, hasPhoneBooths, hasNoMusic, hasQuietZone, petsAllowedIndoors, patioOnly, waterBowlsProvided } = validation.data;
+    const { lat, lng, radius, category, wifi, outlets, quiet, ergonomic, outletDensity, wifiSpeedBand, hasPhoneBooths, hasNoMusic, hasQuietZone, lighting, petsAllowedIndoors, patioOnly, waterBowlsProvided, singleOriginBeans, specialtyEspresso, oatAlmondMilk, pourOverAvailable} = validation.data;
 
     // Simple bounding box search (for PostgreSQL without PostGIS)
     // Approximate: 1 degree ≈ 111km
@@ -108,6 +113,21 @@ export async function GET(req: NextRequest) {
     if (hasQuietZone) {
       where.hasQuietZone = true;
     }
+    if (singleOriginBeans) {
+      where.singleOriginBeans = true;
+    }
+
+    if (specialtyEspresso) {
+      where.specialtyEspresso = true;
+    }
+
+    if (oatAlmondMilk) {
+      where.oatAlmondMilk = true;
+    }
+
+    if (pourOverAvailable) {
+      where.pourOverAvailable = true;
+    }
     if (petsAllowedIndoors) {
       where.petsAllowedIndoors = true;
     }
@@ -118,6 +138,10 @@ export async function GET(req: NextRequest) {
 
     if (waterBowlsProvided) {
       where.waterBowlsProvided = true;
+    }
+
+    if (lighting) {
+      where.lighting = lighting;
     }
 
     const venues = await prisma.venue.findMany({
@@ -156,7 +180,7 @@ export async function POST(req: NextRequest) {
     if (!validation.success) {
       return NextResponse.json({ error: validation.error }, { status: 400 });
     }
-    const { name, latitude, longitude, category, address, wifiQuality, hasOutlets, noiseLevel, hasErgonomic, outletDensity, wifiSpeed, hasPhoneBooths, hasNoMusic, hasQuietZone, petsAllowedIndoors, patioOnly, waterBowlsProvided } = validation.data;
+    const { name, latitude, longitude, category, address, wifiQuality, hasOutlets, noiseLevel, hasErgonomic, outletDensity, wifiSpeed, hasPhoneBooths, hasNoMusic, hasQuietZone, lighting, petsAllowedIndoors, patioOnly, waterBowlsProvided, singleOriginBeans, specialtyEspresso, oatAlmondMilk, pourOverAvailable } = validation.data;
     const { placeId, rating, imageUrl } = body; // placeId, rating, imageUrl are additional fields
 
     // Validate placeId (required for upsert)
@@ -198,9 +222,14 @@ export async function POST(req: NextRequest) {
         hasPhoneBooths,
         hasNoMusic,
         hasQuietZone,
+        lighting,
         petsAllowedIndoors,
         patioOnly,
         waterBowlsProvided,
+        singleOriginBeans,
+        specialtyEspresso,
+        oatAlmondMilk,
+        pourOverAvailable,
         crowdsourced: true,
         requiresReview,
         ...(imageUrl && { imageUrl }),
@@ -222,9 +251,14 @@ export async function POST(req: NextRequest) {
         hasPhoneBooths: hasPhoneBooths || false,
         hasNoMusic: hasNoMusic || false,
         hasQuietZone: hasQuietZone || false,
+        lighting,
         petsAllowedIndoors: petsAllowedIndoors || false,
         patioOnly: patioOnly || false,
         waterBowlsProvided: waterBowlsProvided || false,
+        singleOriginBeans: singleOriginBeans || false,
+        specialtyEspresso: specialtyEspresso || false,
+        oatAlmondMilk: oatAlmondMilk || false,
+        pourOverAvailable: pourOverAvailable || false,
         crowdsourced: true,
         requiresReview,
         imageUrl,

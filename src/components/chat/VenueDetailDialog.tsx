@@ -735,7 +735,10 @@ export function VenueDetailDialog({
   const scannerLowConfidence = isLibrary && voteMetrics.scanner.hidden;
 
   return (
-    <div className="fixed inset-0 z-[10000] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-zinc-950/95 animate-in fade-in duration-300">
+    <div
+      className="fixed inset-0 z-[10000] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-zinc-950/95 animate-in fade-in duration-300"
+      style={{ touchAction: "pan-y" }}
+    >
       <div
         className="bg-white dark:bg-zinc-900 w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-t-3xl sm:rounded-3xl shadow-[0_20px_100px_rgba(0,0,0,0.9)] border border-zinc-200 dark:border-zinc-800 animate-in slide-in-from-bottom-12 zoom-in-95 duration-500"
         onClick={(e) => e.stopPropagation()}
@@ -790,11 +793,12 @@ export function VenueDetailDialog({
           {photoLoading ? (
             <div className="w-full h-full bg-zinc-100 dark:bg-zinc-800 animate-pulse" />
           ) : (
-            /* eslint-disable-next-line @next/next/no-img-element */
+            // eslint-disable-next-line @next/next/no-img-element
             <img
               src={displayPhoto}
               alt={venue.name}
               className="w-full h-full object-cover"
+              style={{ touchAction: "pan-y" }}
               onError={() => setImageError(true)}
             />
           )}

@@ -1,6 +1,7 @@
 import { SignIn } from "@clerk/nextjs";
 import Link from "next/link";
 import { MapPin, Sparkles } from "lucide-react";
+import { PasskeyFrameNotice } from "@/components/PasskeyFrameNotice";
 
 export default function SignInPage() {
   return (
@@ -58,6 +59,7 @@ export default function SignInPage() {
           </div>
 
           <div className="w-full">
+             <PasskeyFrameNotice />
             <SignIn
               appearance={{
                 elements: {

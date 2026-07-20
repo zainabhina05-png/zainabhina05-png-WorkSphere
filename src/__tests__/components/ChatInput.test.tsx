@@ -1,7 +1,9 @@
-import "@testing-library/jest-dom";
 import React from "react";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { ChatInput } from "@/components/chat/ChatMessages";
+import { ChatInput } from "../../components/chat/ChatMessages";
+import "@testing-library/jest-dom";
+
+// Mock framer-motion to avoid animation timing issues in tests
 jest.mock("framer-motion", () => ({
   motion: {
     div: ({ children, ...props }: any) => <div {...props}>{children}</div>,
@@ -9,30 +11,13 @@ jest.mock("framer-motion", () => ({
   AnimatePresence: ({ children }: any) => <>{children}</>,
 }));
 
-describe("ChatInput recent searches history", () => {
+describe("ChatInput Recent Searches", () => {
   const mockOnInputChange = jest.fn();
-  const mockOnSubmit = jest.fn();
+  const mockOnSubmit = jest.fn((e) => e.preventDefault());
 
   beforeEach(() => {
-    mockOnInputChange.mockClear();
-    mockOnSubmit.mockClear();
     localStorage.clear();
-  });
-
-  it("renders input field correctly", () => {
-    render(
-      <ChatInput
-        input=""
-        isLoading={false}
-        onInputChange={mockOnInputChange}
-        onSubmit={mockOnSubmit}
-      />,
-    );
-
-    const inputEl = screen.getByPlaceholderText(
-      "Where's the focus mode hotspot?",
-    );
-    expect(inputEl).toBeInTheDocument();
+    jest.clearAllMocks();
   });
 
   it("does not display recent searches panel when focused if history is empty", () => {
@@ -88,7 +73,9 @@ describe("ChatInput recent searches history", () => {
       />,
     );
 
-    const form = screen.getByRole("button").closest("form");
+    const form = screen
+      .getByPlaceholderText("Where's the focus mode hotspot?")
+      .closest("form");
     expect(form).toBeInTheDocument();
     fireEvent.submit(form!);
 

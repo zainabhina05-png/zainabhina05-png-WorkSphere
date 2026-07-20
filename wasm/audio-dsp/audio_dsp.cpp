@@ -44,8 +44,11 @@ static float noise_gate_threshold = 0.02f;
 static float wiener_alpha = 0.98f;
 static float spectral_floor = 0.05f;
 
-// Heap allocator state
-static int heap_ptr = FFT_SIZE * 4 * 8;  // Leave room for state buffers
+// Heap allocator state.
+// Starts beyond the static buffers.  Always kept 16-byte aligned so that
+// wasm_v128_load / wasm_v128_store (which require 16-byte alignment on
+// 32-bit ARM Android Chrome) never produce unaligned-access traps (#1039).
+static int heap_ptr = (FFT_SIZE * 4 * 8 + 15) & ~15;  // 16-byte aligned start
 
 // Forward declarations
 static void compute_fft(float* real, float* imag, int n);
@@ -258,10 +261,20 @@ void getLastSpectrum(float* out_real, float* out_imag, int length) {
 
 /**
  * Malloc for WASM memory management.
+ *
+ * Bug fix (Issue #1039): Aligns every allocation to 16 bytes.
+ * The wasm_v128_load / wasm_v128_store SIMD intrinsics used in computeRMS,
+ * compute_magnitude_spectrum, spectral_gate, and compute_ifft all require
+ * 16-byte alignment on 32-bit ARM Android Chrome.  Without this, the browser
+ * runtime raises RuntimeError: memory access out of bounds.
+ *
+ * Alignment formula:  aligned = (ptr + 15) & ~15
  */
 int malloc(int size) {
+    // Round size up to next 16-byte multiple to keep heap_ptr aligned
+    int aligned_size = (size + 15) & ~15;
     int ptr = heap_ptr;
-    heap_ptr += size;
+    heap_ptr += aligned_size;
     return ptr;
 }
 
@@ -273,10 +286,10 @@ void free(int ptr) {
 }
 
 /**
- * Reset heap pointer.
+ * Reset heap pointer back to the 16-byte-aligned initial position.
  */
 void resetHeap() {
-    heap_ptr = FFT_SIZE * 4 * 8;
+    heap_ptr = (FFT_SIZE * 4 * 8 + 15) & ~15;
 }
 
 }  // extern "C"

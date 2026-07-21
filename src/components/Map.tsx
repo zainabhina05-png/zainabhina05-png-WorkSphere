@@ -19,6 +19,7 @@ import {
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { MapMarker, MapRoute, MapView } from "@/types/map";
+import { WebGLHeatmapLayer } from "./WebGLHeatmapLayer";
 import {
   useSeatAvailability,
   type SeatStatus,
@@ -278,7 +279,9 @@ function WebGLContextWatcher() {
   const map = useMap();
 
   useEffect(() => {
+    if (!map || typeof map.getContainer !== "function") return;
     const container = map.getContainer();
+    if (!container) return;
     const cleanups: Array<() => void> = [];
 
     const setupCanvases = () => {
@@ -329,8 +332,139 @@ const Map = ({
 }) => {
   const clerkUser = useUser();
   const { theme } = useTheme();
+  const { getToken } = useAuth();
+  const [token, setToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    getToken()
+      .then(setToken)
+      .catch(() => setToken(null));
+  }, [getToken]);
+
+  interface MapCursor {
+    lat: number;
+    lng: number;
+    name: string;
+    avatar: string;
+  }
+
+  const [mapCursors, setMapCursors] = useState<Record<string, MapCursor>>({});
+  const cursorLastSeen = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setMapCursors((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const [userId, lastSeen] of Object.entries(
+          cursorLastSeen.current,
+        )) {
+          if (now - lastSeen > 3000) {
+            delete next[userId];
+            delete cursorLastSeen.current[userId];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const socket = usePartySocket({
+    host: "127.0.0.1:1999",
+    room: roomId || "default",
+    query: token ? { token } : undefined,
+    onMessage(event) {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === "map-cursor") {
+          const userId = data.userId || data.name;
+          cursorLastSeen.current[userId] = Date.now();
+          setMapCursors((prev) => ({
+            ...prev,
+            [userId]: {
+              lat: data.lat,
+              lng: data.lng,
+              name: data.name,
+              avatar: data.avatar,
+            },
+          }));
+        } else if (data.type === "map-cursor-offline") {
+          const userId = data.userId || data.name;
+          delete cursorLastSeen.current[userId];
+          setMapCursors((prev) => {
+            if (!(userId in prev)) return prev;
+            const next = { ...prev };
+            delete next[userId];
+            return next;
+          });
+        }
+      } catch {
+        // Ignore
+      }
+    },
+  });
+
+  const userRef = useRef(clerkUser);
+  useEffect(() => {
+    userRef.current = clerkUser;
+  }, [clerkUser]);
+
+  const throttledBroadcastRef = useRef<((latlng: L.LatLng) => void) | null>(
+    null,
+  );
+
+  useEffect(() => {
+    throttledBroadcastRef.current = throttle((latlng: L.LatLng) => {
+      if (socket && socket.readyState === 1) {
+        const user = userRef.current.user;
+        socket.send(
+          JSON.stringify({
+            type: "map-cursor",
+            lat: latlng.lat,
+            lng: latlng.lng,
+            name: user?.firstName || "Anonymous",
+            avatar: user?.imageUrl || "default",
+            userId: user?.id || "anonymous",
+          }),
+        );
+      }
+    }, 50);
+  }, [socket]);
+
+  const throttledBroadcast = useCallback((latlng: L.LatLng) => {
+    if (throttledBroadcastRef.current) {
+      throttledBroadcastRef.current(latlng);
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (socket && socket.readyState === 1) {
+        const user = userRef.current.user;
+        try {
+          socket.send(
+            JSON.stringify({
+              type: "map-cursor-offline",
+              name: user?.firstName || "Anonymous",
+              userId: user?.id || "anonymous",
+            }),
+          );
+        } catch {
+          // ignore
+        }
+      }
+    };
+  }, [socket]);
   const { latitude, longitude } = location;
   const routingPanelRef = useRef<HTMLDivElement>(null);
+  // Forecast selector state
+  const [selectedDay, setSelectedDay] = useState<number>(new Date().getDay()); // 0=Sun
+  const [selectedHour, setSelectedHour] = useState<number>(
+    new Date().getHours(),
+  );
 
   // Memoized event handlers for all interactive markers to prevent react-leaflet
   // from removing and re-adding event listeners on every render.
@@ -523,16 +657,24 @@ const Map = ({
   };
 
   // Async load data context when layer UI toggles active
+  // Fetch heatmap points for selected day and hour (forecast)
   useEffect(() => {
-    fetch("/api/map/heatmap")
-      .then((res) => res.json())
-      .then((resData) => {
-        if (resData.success) {
-          setHeatmapPoints(resData.data);
-        }
-      })
-      .catch((err) => console.error("Could not populate heatmap context", err));
-  }, []);
+    // Debounce fetch to avoid rapid requests when sliding time
+    const timer = setTimeout(() => {
+      const url = `/api/map/forecast-heatmap?day=${selectedDay}&hour=${selectedHour}`;
+      fetch(url)
+        .then((res) => res.json())
+        .then((resData) => {
+          if (resData.success) {
+            setHeatmapPoints(resData.data);
+          }
+        })
+        .catch((err) =>
+          console.error("Could not populate forecast heatmap", err),
+        );
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [selectedDay, selectedHour]);
 
   useEffect(() => {
     fetch("/api/map/noise-heatmap")
@@ -546,6 +688,27 @@ const Map = ({
         console.error("Could not populate noise heatmap context", err),
       );
   }, []);
+
+  // Compute WebGL GPU Heatmap Telemetry Points (combining forecast telemetry & markers)
+  const webglTelemetryPoints = useMemo(() => {
+    if (heatmapPoints && heatmapPoints.length > 0) {
+      return heatmapPoints.map((pt: any) => ({
+        lat: Number(pt[0]),
+        lng: Number(pt[1]),
+        intensity: pt[2] != null ? Number(pt[2]) : 0.75,
+        radius: 32,
+      }));
+    }
+    // Fallback: map venue markers to telemetry point data
+    return markers
+      .filter((m) => m.position?.lat != null && m.position?.lng != null)
+      .map((m) => ({
+        lat: Number(m.position.lat),
+        lng: Number(m.position.lng),
+        intensity: 0.85,
+        radius: 36,
+      }));
+  }, [heatmapPoints, markers]);
 
   // Group and spiderfy overlapping markers
   const spiderfiedMarkers = useMemo(() => {
@@ -694,6 +857,14 @@ const Map = ({
           mix-blend-mode: screen;
           filter: none !important; /* Forces the browser to keep full color saturation */
         }
+
+        /* WebGL GPU Heatmap Canvas Overlay (#818) */
+        .leaflet-webgl-heatmap-layer {
+          z-index: 401 !important;
+          mix-blend-mode: screen;
+          filter: none !important;
+          pointer-events: none;
+        }
         
         /* GPU-accelerated pulsing keyframes */
         @keyframes markerPulse {
@@ -817,11 +988,28 @@ const Map = ({
         
         /* Floating toggle position above canvas layers */
         .map-noise-toggle {
-  position: absolute;
-  top: 68px;
-  right: 20px;
-  z-index: 1000;
-}
+          position: absolute;
+          top: 68px;
+          right: 20px;
+          z-index: 1000;
+        }
+        .map-forecast-controls {
+          position: absolute;
+          top: 120px;
+          right: 20px;
+          z-index: 1000;
+          background: rgba(24,24,27,0.9);
+          padding: 8px 12px;
+          border-radius: 8px;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          color: #f4f4f5;
+        }
+        .map-forecast-controls select,
+        .map-forecast-controls input[type="range"] {
+          width: 120px;
+        }
   .leaflet-control-scale {
   background: transparent;
 }
@@ -848,6 +1036,33 @@ const Map = ({
         }}
       >
         <ScaleControl position="bottomleft" metric={true} imperial={false} />
+        {/* Forecast selector UI */}
+        <div className="map-forecast-controls">
+          <label htmlFor="day-select">Day</label>
+          <select
+            id="day-select"
+            value={selectedDay}
+            onChange={(e) => setSelectedDay(parseInt(e.target.value))}
+          >
+            <option value={0}>Sunday</option>
+            <option value={1}>Monday</option>
+            <option value={2}>Tuesday</option>
+            <option value={3}>Wednesday</option>
+            <option value={4}>Thursday</option>
+            <option value={5}>Friday</option>
+            <option value={6}>Saturday</option>
+          </select>
+          <label htmlFor="hour-range">Hour</label>
+          <input
+            id="hour-range"
+            type="range"
+            min={0}
+            max={23}
+            value={selectedHour}
+            onChange={(e) => setSelectedHour(parseInt(e.target.value))}
+          />
+          <span>{selectedHour}:00</span>
+        </div>
         <LayersControl position="topright">
           <LayersControl.BaseLayer checked name="OpenStreetMap">
             <TileLayer
@@ -860,6 +1075,16 @@ const Map = ({
               updateWhenIdle={true}
             />
           </LayersControl.BaseLayer>
+
+          <LayersControl.Overlay checked name="GPU WebGL Heatmap (60 FPS)">
+            <LayerGroup>
+              <WebGLHeatmapLayer
+                points={webglTelemetryPoints}
+                opacity={0.85}
+                blur={1.0}
+              />
+            </LayerGroup>
+          </LayersControl.Overlay>
 
           <LayersControl.Overlay name="Live Crowd Heatmap">
             <HeatmapOverlay points={heatmapPoints} />
@@ -914,7 +1139,12 @@ const Map = ({
             keyboard={true}
             eventHandlers={markerEventHandlers}
           >
-            <Popup>You are here!</Popup>
+            <Popup
+              autoPanPaddingTopLeft={[20, 90]}
+              autoPanPaddingBottomRight={[20, 20]}
+            >
+              You are here!
+            </Popup>
           </Marker>
         )}
         <MapEvents onMouseMove={throttledBroadcast} />
@@ -940,7 +1170,10 @@ const Map = ({
             keyboard={true}
             eventHandlers={markerEventHandlers}
           >
-            <Popup>
+            <Popup
+              autoPanPaddingTopLeft={[20, 90]}
+              autoPanPaddingBottomRight={[20, 20]}
+            >
               <div className="text-sm">
                 <div className="font-semibold text-white">{marker.name}</div>
                 {marker.category && (
@@ -1026,7 +1259,10 @@ const Map = ({
                 dashArray: travelProfile === "walking" ? "5, 10" : undefined, // Dotted path line if walking
               }}
             >
-              <Popup>
+              <Popup
+                autoPanPaddingTopLeft={[20, 90]}
+                autoPanPaddingBottomRight={[20, 20]}
+              >
                 <div className="text-sm text-white">
                   <div className="font-bold text-blue-400">
                     Optimized Hybrid Schedule

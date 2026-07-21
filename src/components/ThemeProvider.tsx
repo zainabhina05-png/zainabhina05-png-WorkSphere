@@ -2,15 +2,6 @@
 
 import {
   createContext,
-
-  useContext,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
-
-type Theme = "light" | "dark" | "cyberpunk";
-
   useCallback,
   useContext,
   useEffect,
@@ -26,17 +17,15 @@ import {
   parseAccentColor,
 } from "@/lib/constants/theme";
 
-type Theme = "light" | "dark";
+export type Theme = "light" | "dark" | "cyberpunk";
 
-
-interface ThemeContextValue {
+export interface ThemeContextValue {
   theme: Theme;
   setTheme: (theme: Theme) => void;
   toggleTheme: () => void;
- accent: AccentColor;
+  accent: AccentColor;
   accentHex: string;
   setAccent: (accent: AccentColor) => void;
-
 }
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
@@ -44,8 +33,8 @@ const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 const STORAGE_KEY = "worksphere-theme";
 
 function applyTheme(theme: Theme) {
+  if (typeof document === "undefined") return;
   const root = document.documentElement;
-
 
   root.classList.remove("dark", "cyberpunk");
 
@@ -58,46 +47,10 @@ function applyTheme(theme: Theme) {
   root.style.colorScheme = theme === "light" ? "light" : "dark";
 }
 
-export function ThemeProvider({ children }: { children: ReactNode }) {
-  // The blocking script in <head> has already set the class on <html>
-  // before this component ever mounts, so we just read it back here
-  // instead of guessing/defaulting - that's what prevents the flash.
-  const [theme, setThemeState] = useState<Theme>(() => {
-    if (typeof document === "undefined") return "light";
-
-    const root = document.documentElement;
-
-    if (root.classList.contains("cyberpunk")) return "cyberpunk";
-    if (root.classList.contains("dark")) return "dark";
-
-    return "light";
-  });
-
-  const setTheme = (next: Theme) => {
-    setThemeState(next);
-    window.localStorage.setItem(STORAGE_KEY, next);
-    applyTheme(next);
-  };
-
-  const toggleTheme = () => {
-    if (theme === "light") {
-      setTheme("dark");
-    } else if (theme === "dark") {
-      setTheme("cyberpunk");
-    } else {
-      setTheme("light");
-    }
-  };
-
-  // Keep in sync if the theme is changed in another tab.
-
-  root.classList.toggle("dark", theme === "dark");
-  root.style.colorScheme = theme;
-}
-
 function applyAccent(accent: AccentColor) {
+  if (typeof document === "undefined") return;
   const root = document.documentElement;
-  const hex = ACCENT_HEX_MAP[accent];
+  const hex = ACCENT_HEX_MAP[accent] || ACCENT_HEX_MAP[DEFAULT_ACCENT];
   root.style.setProperty("--primary-accent", hex);
   root.style.setProperty("--primary-accent-rgb", hexToRgb(hex));
 }
@@ -119,10 +72,27 @@ export function ThemeProvider({
   initialTheme = "light",
   initialAccent = DEFAULT_ACCENT,
 }: ThemeProviderProps) {
-  const [theme, setThemeState] = useState<Theme>(initialTheme);
-  const [accent, setAccentState] = useState<AccentColor>(initialAccent);
+  const [theme, setThemeState] = useState<Theme>(() => {
+    if (typeof document === "undefined") return initialTheme;
+    const root = document.documentElement;
+    if (root.classList.contains("cyberpunk")) return "cyberpunk";
+    if (root.classList.contains("dark")) return "dark";
+    const saved = window.localStorage.getItem(STORAGE_KEY) as Theme | null;
+    if (saved === "dark" || saved === "cyberpunk" || saved === "light")
+      return saved;
+    return initialTheme;
+  });
 
-  const accentHex = useMemo(() => ACCENT_HEX_MAP[accent], [accent]);
+  const [accent, setAccentState] = useState<AccentColor>(() => {
+    if (typeof window === "undefined") return initialAccent;
+    const saved = window.localStorage.getItem(ACCENT_STORAGE_KEY);
+    return parseAccentColor(saved);
+  });
+
+  const accentHex = useMemo(
+    () => ACCENT_HEX_MAP[accent] || ACCENT_HEX_MAP[DEFAULT_ACCENT],
+    [accent],
+  );
 
   useEffect(() => {
     applyTheme(theme);
@@ -141,7 +111,11 @@ export function ThemeProvider({
 
   const toggleTheme = useCallback(() => {
     setThemeState((prev) => {
-      const next = prev === "dark" ? "light" : "dark";
+      let next: Theme = "dark";
+      if (prev === "light") next = "dark";
+      else if (prev === "dark") next = "cyberpunk";
+      else next = "light";
+
       window.localStorage.setItem(STORAGE_KEY, next);
       document.cookie = `${STORAGE_KEY}=${next}; path=/; max-age=31536000; SameSite=Lax`;
       applyTheme(next);
@@ -158,36 +132,23 @@ export function ThemeProvider({
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (
-        e.key === STORAGE_KEY &
+        e.key === STORAGE_KEY &&
         (e.newValue === "light" ||
           e.newValue === "dark" ||
           e.newValue === "cyberpunk")
       ) {
         setThemeState(e.newValue as Theme);
         applyTheme(e.newValue as Theme);
-
-        (e.newValue === "light" || e.newValue === "dark")
-      ) {
-        setThemeState(e.newValue);
-        document.cookie = `${STORAGE_KEY}=${e.newValue}; path=/; max-age=31536000; SameSite=Lax`;
-        applyTheme(e.newValue);
       }
       if (e.key === ACCENT_STORAGE_KEY) {
         const parsedAccent = parseAccentColor(e.newValue);
         setAccentState(parsedAccent);
         applyAccent(parsedAccent);
-
       }
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
-
-
-  return (
-    <ThemeContext.Provider value={{ theme, setTheme, toggleTheme }}>
-      {children}
-    </ThemeContext.Provider>
 
   const value = useMemo<ThemeContextValue>(
     () => ({ theme, setTheme, toggleTheme, accent, accentHex, setAccent }),
@@ -196,14 +157,20 @@ export function ThemeProvider({
 
   return (
     <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
-
   );
 }
 
 export function useTheme() {
   const ctx = useContext(ThemeContext);
   if (!ctx) {
-    throw new Error("useTheme must be used within a ThemeProvider");
+    return {
+      theme: "light" as Theme,
+      setTheme: () => {},
+      toggleTheme: () => {},
+      accent: DEFAULT_ACCENT,
+      accentHex: ACCENT_HEX_MAP[DEFAULT_ACCENT],
+      setAccent: () => {},
+    };
   }
   return ctx;
 }

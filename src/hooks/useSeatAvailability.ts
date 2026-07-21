@@ -66,11 +66,6 @@ export function useSeatAvailability() {
   // renders without needing checkedInVenueId itself as a dependency.
   const checkedInVenueRef = useRef<string | null>(null);
 
-  const [isMounted, setIsMounted] = useState(false);
-  useEffect(() => {
-    setIsMounted(true);
-  }, []);
-
   useEffect(() => {
     getToken()
       .then(setToken)
@@ -78,8 +73,9 @@ export function useSeatAvailability() {
   }, [getToken]);
 
   const socket = usePartySocket({
-    host: "127.0.0.1:1999",
-    room: isMounted ? SEAT_ROOM : null,
+    host: process.env.NEXT_PUBLIC_PARTYKIT_HOST || "127.0.0.1:1999",
+    room: isMounted ? SEAT_ROOM : "seat-availability",
+    startClosed: !isMounted,
     query: token ? { token } : undefined,
     onOpen() {
       setIsConnected(true);
@@ -218,7 +214,6 @@ export function useSeatAvailability() {
         }
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [socket]);
 
   const getAvailability = useCallback(

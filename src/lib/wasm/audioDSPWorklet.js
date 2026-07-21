@@ -16,6 +16,14 @@ class AudioDSPProcessor extends AudioWorkletProcessor {
     this.port.onmessage = this.handleMessage.bind(this);
   }
 
+  /**
+   * Round n up to the next multiple of 8 (ensures Float32Array / Float64Array
+   * alignment on 32-bit ARM Android Chrome — Issue #1039).
+   */
+  align8(n) {
+    return (n + 7) & ~7;
+  }
+
   async handleMessage(event) {
     const { type, wasmBinary, ...data } = event.data;
 
@@ -55,8 +63,22 @@ class AudioDSPProcessor extends AudioWorkletProcessor {
       const instance = await WebAssembly.instantiate(wasmModule);
 
       this.wasmExports = instance.exports;
-      this.inputBufferPtr = this.wasmExports.malloc(this.frameSize * 4);
-      this.outputBufferPtr = this.wasmExports.malloc(this.frameSize * 4);
+
+      // Use 8-byte-aligned allocation sizes (fix for Issue #1039).
+      // Previously `this.frameSize * 4` was passed without alignment, which
+      // could produce misaligned pointers on 32-bit ARM Android Chrome.
+      const alignedFrameBytes = this.align8(this.frameSize * 4);
+      this.inputBufferPtr = this.wasmExports.malloc(alignedFrameBytes);
+      this.outputBufferPtr = this.wasmExports.malloc(alignedFrameBytes);
+
+      // Verify 4-byte alignment before any typed-array views are created.
+      if (this.inputBufferPtr % 4 !== 0 || this.outputBufferPtr % 4 !== 0) {
+        throw new RangeError(
+          `[AudioDSP] WASM malloc returned misaligned pointer: ` +
+            `input=0x${this.inputBufferPtr.toString(16)} ` +
+            `output=0x${this.outputBufferPtr.toString(16)} (Issue #1039)`,
+        );
+      }
 
       this.wasmReady = true;
       this.port.postMessage({ type: "ready" });
@@ -65,7 +87,7 @@ class AudioDSPProcessor extends AudioWorkletProcessor {
     }
   }
 
-  process(inputs, outputs, parameters) {
+  process(inputs, outputs, _parameters) {
     const input = inputs[0];
     const output = outputs[0];
 
@@ -91,32 +113,41 @@ class AudioDSPProcessor extends AudioWorkletProcessor {
       return true;
     }
 
-    // Copy input to WASM memory
-    const inputView = new Float32Array(
-      this.wasmExports.memory.buffer,
-      this.inputBufferPtr,
-      channelLength,
-    );
-    inputView.set(inputChannel);
+    try {
+      // Use the byte-offset Float32Array constructor — NOT the element-index
+      // shortcut (ptr / 4).  The byte-offset form validates alignment at
+      // construction time, giving a clear RangeError instead of a silent
+      // out-of-bounds crash on 32-bit ARM Android Chrome (Issue #1039).
+      const inputView = new Float32Array(
+        this.wasmExports.memory.buffer,
+        this.inputBufferPtr,
+        channelLength,
+      );
+      inputView.set(inputChannel);
 
-    // Process through WASM DSP pipeline
-    const rms = this.wasmExports.processAudioFrame(
-      this.inputBufferPtr,
-      channelLength,
-      this.outputBufferPtr,
-      channelLength,
-    );
+      // Process through WASM DSP pipeline
+      const rms = this.wasmExports.processAudioFrame(
+        this.inputBufferPtr,
+        channelLength,
+        this.outputBufferPtr,
+        channelLength,
+      );
 
-    // Copy output from WASM memory
-    const outputView = new Float32Array(
-      this.wasmExports.memory.buffer,
-      this.outputBufferPtr,
-      channelLength,
-    );
-    outputChannel.set(outputView);
+      // Read output using byte-offset constructor (same alignment guarantee)
+      const outputView = new Float32Array(
+        this.wasmExports.memory.buffer,
+        this.outputBufferPtr,
+        channelLength,
+      );
+      outputChannel.set(outputView);
 
-    // Send RMS level to main thread for visualization
-    this.port.postMessage({ type: "rms", rms });
+      // Send RMS level to main thread for visualization
+      this.port.postMessage({ type: "rms", rms });
+    } catch (err) {
+      // Safe passthrough on alignment or bounds error — never drop audio
+      outputChannel.set(inputChannel);
+      this.port.postMessage({ type: "error", error: err.message });
+    }
 
     return true;
   }

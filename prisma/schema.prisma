@@ -658,8 +658,6 @@ model PushNotificationLog {
 
   @@index([createdAt])
   @@index([status])
-  @@index([type])
-  @@index([recipient])
 }
 
 model FoodValidation {

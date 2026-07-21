@@ -52,6 +52,9 @@ export interface Venue {
   lat: number;
   lng: number;
   category: string;
+  foodTags?: string[];
+  mealPrice?: string;
+  lunchDealSchedule?: string;
   address?: string;
   wifi?: boolean;
   hasOutlets?: boolean;

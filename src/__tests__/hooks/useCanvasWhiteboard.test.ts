@@ -48,8 +48,8 @@ const mockUndoManager = {
   redo: mockRedo,
   on: mockOn,
   destroy: jest.fn(),
-  undoStack: { size: 0 },
-  redoStack: { size: 0 },
+  undoStack: { length: 0 },
+  redoStack: { length: 0 },
 };
 
 let mockYArrayInstance = new MockYArray();

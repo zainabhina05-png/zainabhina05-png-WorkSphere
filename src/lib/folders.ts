@@ -24,7 +24,7 @@ function isTransientWriteConflict(error: unknown): boolean {
  * write conflict or deadlock (P2034).
  */
 async function runInShortTransaction<T>(
-  fn: (tx: any) => Promise<T>,
+  fn: (tx: Prisma.TransactionClient) => Promise<T>,
 ): Promise<T> {
   let attempt = 0;
   for (;;) {

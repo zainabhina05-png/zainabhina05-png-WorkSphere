@@ -7,8 +7,6 @@ import { TopNav } from "@/components/TopNav";
 import SiteFooter from "@/components/site-footer";
 import PremiumZkpGate from "@/components/venues/PremiumZkpGate";
 import { isPremiumVenue } from "@/lib/zkp/membership";
-import { WeatherCloudRenderer } from "@/components/WeatherCloudRenderer";
-import { VenueGodRays } from "@/components/VenueGodRays";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -169,32 +167,6 @@ export default async function VenuePage({ params }: PageProps) {
                   </div>
                 </div>
               ) : null}
-            </div>
-
-            {/* Live WebGL 3D Volumetric Cloud Weather Visualizer for Outdoor Workspaces */}
-            <div className="pt-2">
-              <h3 className="text-xs font-black uppercase tracking-widest text-zinc-500 mb-3 flex items-center gap-2">
-                <span>Outdoor Weather Conditions</span>
-              </h3>
-              <WeatherCloudRenderer
-                lat={venue.latitude}
-                lng={venue.longitude}
-                height="260px"
-                interactive={true}
-              />
-            </div>
-
-            {/* WebGL 2.0 Volumetric Light Shaft (God Rays) Renderer */}
-            <div className="pt-2">
-              <h3 className="text-xs font-black uppercase tracking-widest text-zinc-500 mb-3 flex items-center gap-2">
-                <span>Volumetric Light Shafts</span>
-              </h3>
-              <VenueGodRays
-                lat={venue.latitude}
-                lng={venue.longitude}
-                height="200px"
-                quality="medium"
-              />
             </div>
 
             <div className="pt-6 border-t border-zinc-100 dark:border-zinc-800 space-y-4">

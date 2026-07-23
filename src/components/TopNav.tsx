@@ -120,31 +120,44 @@ export function TopNav({ hideAuth = false }: TopNavProps) {
       </div>
 
       {isMenuOpen && (
-        <div className="sm:hidden border-t bg-white dark:bg-black">
-          <div className="flex flex-col p-4 gap-3">
-            {!isSignedIn ? (
-              <>
-                <Link href="/sign-in" onClick={() => setIsMenuOpen(false)}>
-                  Sign In
-                </Link>
+        <>
+          {/* Backdrop Overlay */}
+          <div
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm sm:hidden z-40"
+            onClick={() => setIsMenuOpen(false)}
+            aria-hidden="true"
+          />
 
-                <Link href="/sign-up" onClick={() => setIsMenuOpen(false)}>
-                  Get Started
-                </Link>
-              </>
-            ) : (
-              <>
-                <Link href="/ai" onClick={() => setIsMenuOpen(false)}>
-                  Dashboard
-                </Link>
+          {/* Mobile Menu Drawer */}
+          <div className="sm:hidden border-t bg-white dark:bg-black relative z-50">
+            <div className="flex flex-col p-4 gap-3">
+              {!isSignedIn ? (
+                <>
+                  <Link href="/sign-in" onClick={() => setIsMenuOpen(false)}>
+                    Sign In
+                  </Link>
 
-                <Link href="/collections" onClick={() => setIsMenuOpen(false)}>
-                  Collections
-                </Link>
-              </>
-            )}
+                  <Link href="/sign-up" onClick={() => setIsMenuOpen(false)}>
+                    Get Started
+                  </Link>
+                </>
+              ) : (
+                <>
+                  <Link href="/ai" onClick={() => setIsMenuOpen(false)}>
+                    Dashboard
+                  </Link>
+
+                  <Link
+                    href="/collections"
+                    onClick={() => setIsMenuOpen(false)}
+                  >
+                    Collections
+                  </Link>
+                </>
+              )}
+            </div>
           </div>
-        </div>
+        </>
       )}
     </nav>
   );

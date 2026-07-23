@@ -57,6 +57,7 @@ model User {
   longestStreak      Int                @default(0)
   lastCheckInDate    String? // stored as "YYYY-MM-DD" UTC
   passkeys           PasskeyCredential[]
+  isVerifiedStudent  Boolean            @default(false)
 }
 
 model Venue {
@@ -689,6 +690,7 @@ model PushNotificationLog {
   body      String
   status    String
   error     String?
+  read      Boolean  @default(false)
   createdAt DateTime @default(now())
 
   @@index([createdAt])

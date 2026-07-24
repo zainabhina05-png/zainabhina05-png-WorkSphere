@@ -5,7 +5,7 @@ import * as Y from "yjs";
 import usePartySocket from "partysocket/react";
 import { CryptoManager } from "@/lib/e2ee/CryptoManager";
 import { KeyStore } from "@/lib/e2ee/KeyStore";
-import { Unlock, Key, Loader2, Share2 } from "lucide-react";
+import { Lock, Unlock, Key, Loader2, Share2 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import {
   generateKeyPair,
@@ -106,17 +106,7 @@ export default function Scratchpad({ sessionId }: Props) {
             ciphertext,
             iv,
           );
-
-          const hash = Array.from(decryptedUpdate)
-            .map((b) => b.toString(16).padStart(2, "0"))
-            .join("");
-          if (processedUpdatesRef.current.has(hash)) {
-            return;
-          }
-          processedUpdatesRef.current.add(hash);
-
-          updateQueueRef.current.push(decryptedUpdate);
-
+          
           isLocalUpdateRef.current = true;
           processQueue();
           isLocalUpdateRef.current = false;
@@ -237,21 +227,11 @@ export default function Scratchpad({ sessionId }: Props) {
       if (isLocalUpdateRef.current || !cryptoKeyRef.current) return;
 
       try {
-        const hash = Array.from(update)
-          .map((b) => b.toString(16).padStart(2, "0"))
-          .join("");
-        processedUpdatesRef.current.add(hash);
-
-        const encrypted = await CryptoManager.encryptPayload(
-          cryptoKeyRef.current,
-          update,
-        );
-        socket.send(
-          JSON.stringify({
-            type: "e2ee-delta",
-            payload: encrypted,
-          }),
-        );
+        const encrypted = await CryptoManager.encryptPayload(cryptoKeyRef.current, update);
+        socket.send(JSON.stringify({
+          type: "e2ee-delta",
+          payload: encrypted
+        }));
       } catch (err) {
         console.error("Failed to encrypt/send update", err);
       }
@@ -348,7 +328,7 @@ export default function Scratchpad({ sessionId }: Props) {
         <div className="flex items-center gap-2">
           <button
             onClick={handleShare}
-            className="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1"
+            className="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1 focus-visible:ring-2 focus-visible:ring-primary focus:outline-none"
           >
             <Share2 className="h-3 w-3" />
             Share
@@ -356,7 +336,7 @@ export default function Scratchpad({ sessionId }: Props) {
 
           <button
             onClick={handleClearKey}
-            className="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1"
+            className="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1 focus-visible:ring-2 focus-visible:ring-primary focus:outline-none"
           >
             <Key className="h-3 w-3" />
             Clear Key

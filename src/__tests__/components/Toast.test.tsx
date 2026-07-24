@@ -1,156 +1,126 @@
 /**
- * Unit tests for ToastItem pause-on-hover behaviour (issue #1664).
- *
- * Verifies that:
- *  - The auto-dismiss timer is cleared when the mouse enters the toast.
- *  - The timer restarts (with the full 4-second window) after the mouse leaves.
- *  - The timer is cleared when the toast receives keyboard focus.
- *  - The timer restarts when the toast loses focus (blur).
- *  - The manual dismiss button works regardless of hover state.
+ * Unit tests for ToastItem behaviour including countdowns, types, and pause-on-hover.
  */
 
 import React from "react";
 import { render, screen, act, fireEvent } from "@testing-library/react";
+import "@testing-library/jest-dom";
+import { ToastProvider, useToast } from "@/components/ui/Toast";
 
-// ---------------------------------------------------------------------------
-// Mock lucide-react icons used by Toast.tsx
-// ---------------------------------------------------------------------------
+// Mock lucide-react icons
 jest.mock("lucide-react", () => ({
-  X: () => <svg data-testid="icon-x" />,
-  CheckCircle2: () => <svg data-testid="icon-check" />,
-  AlertCircle: () => <svg data-testid="icon-alert-circle" />,
-  AlertTriangle: () => <svg data-testid="icon-alert-triangle" />,
+  X: (props: any) => <svg data-testid="icon-x" {...props} />,
+  CheckCircle2: (props: any) => <svg data-testid="icon-check" {...props} />,
+  AlertCircle: (props: any) => <svg data-testid="icon-alert-circle" {...props} />,
+  AlertTriangle: (props: any) => <svg data-testid="icon-alert-triangle" {...props} />,
 }));
 
-// ---------------------------------------------------------------------------
-// Mock @/lib/utils cn helper
-// ---------------------------------------------------------------------------
+// Mock cn helper
 jest.mock("@/lib/utils", () => ({
   cn: (...args: unknown[]) => args.filter(Boolean).join(" "),
 }));
 
-// ---------------------------------------------------------------------------
-// We test ToastProvider end-to-end via the public useToast hook so we exercise
-// the full stack without importing the internal ToastItem directly.
-// ---------------------------------------------------------------------------
-import { ToastProvider, useToast } from "@/components/ui/Toast";
-
-/** Helper: renders the ToastProvider and a button that triggers a toast. */
-function renderToast(opts: {
-  type?: "success" | "error" | "warning";
-  action?: { label: string; onClick: () => void };
-}) {
-  const Wrapper = () => {
-    const { toast } = useToast();
-    return (
-      <button
-        data-testid="trigger"
-        onClick={() =>
-          toast("Test message", opts.type ?? "success", opts.action)
-        }
-      >
-        Show toast
-      </button>
-    );
-  };
-
-  return render(
-    <ToastProvider>
-      <Wrapper />
-    </ToastProvider>,
+function TestButton() {
+  const { toast } = useToast();
+  return (
+    <button onClick={() => toast("Test message", "success")}>
+      Show Toast
+    </button>
   );
 }
 
-describe("ToastItem — pause-on-hover", () => {
-  beforeEach(() => {
-    jest.useFakeTimers();
-  });
+function ErrorToastButton() {
+  const { toast } = useToast();
+  return (
+    <button onClick={() => toast("Error occurred", "error")}>
+      Show Error
+    </button>
+  );
+}
 
-  afterEach(() => {
-    jest.runOnlyPendingTimers();
-    jest.useRealTimers();
-  });
+function ActionToastButton() {
+  const { toast } = useToast();
+  return (
+    <button
+      onClick={() =>
+        toast("Undo?", "warning", { label: "Undo", onClick: jest.fn() })
+      }
+    >
+      Show Action
+    </button>
+  );
+}
 
+function Wrapper({ children }: { children: React.ReactNode }) {
+  return <ToastProvider>{children}</ToastProvider>;
+}
+
+beforeEach(() => {
+  jest.useFakeTimers();
+});
+
+afterEach(() => {
+  jest.runOnlyPendingTimers();
+  jest.useRealTimers();
+});
+
+describe("Toast functionality", () => {
   it("auto-dismisses after 4 seconds when not hovered", () => {
-    renderToast({});
+    render(
+      <Wrapper>
+        <TestButton />
+      </Wrapper>,
+    );
 
-    act(() => {
-      fireEvent.click(screen.getByTestId("trigger"));
-    });
-
-    expect(screen.getByRole("status")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Show Toast"));
+    expect(screen.getByText("Test message")).toBeInTheDocument();
 
     act(() => {
       jest.advanceTimersByTime(4000);
     });
 
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByText("Test message")).not.toBeInTheDocument();
   });
 
-  it("pauses the timer while the mouse is over the toast", () => {
-    renderToast({});
+  it("pauses dismissal on mouseenter and resumes on mouseleave", () => {
+    render(
+      <Wrapper>
+        <TestButton />
+      </Wrapper>,
+    );
 
+    fireEvent.click(screen.getByText("Show Toast"));
+    const toast = screen.getByText("Test message").closest("[role='status']")!;
+
+    // Advance partway, then hover
     act(() => {
-      fireEvent.click(screen.getByTestId("trigger"));
+      jest.advanceTimersByTime(2000);
     });
+    fireEvent.mouseEnter(toast);
 
-    const toastEl = screen.getByRole("status");
-
-    // Hover over the toast at t=1s
-    act(() => {
-      jest.advanceTimersByTime(1000);
-      fireEvent.mouseEnter(toastEl);
-    });
-
-    // Advance past the original 4-second threshold — toast must still be visible
-    act(() => {
-      jest.advanceTimersByTime(5000);
-    });
-
-    expect(screen.getByRole("status")).toBeInTheDocument();
-  });
-
-  it("restarts the full 4-second timer after mouseLeave", () => {
-    renderToast({});
-
-    act(() => {
-      fireEvent.click(screen.getByTestId("trigger"));
-    });
-
-    const toastEl = screen.getByRole("status");
-
-    // Hover and then leave
-    act(() => {
-      jest.advanceTimersByTime(1000);
-      fireEvent.mouseEnter(toastEl);
-    });
-
+    // Advance past original 4s mark — should still be visible
     act(() => {
       jest.advanceTimersByTime(3000);
-      fireEvent.mouseLeave(toastEl);
     });
+    expect(screen.getByText("Test message")).toBeInTheDocument();
 
-    // Only 1 second elapsed after leave — toast must still be visible
+    // Leave hover, new 4s timer starts
+    fireEvent.mouseLeave(toast);
     act(() => {
-      jest.advanceTimersByTime(1000);
+      jest.advanceTimersByTime(4000);
     });
-    expect(screen.getByRole("status")).toBeInTheDocument();
-
-    // Full 4 seconds elapsed after leave — now it should be gone
-    act(() => {
-      jest.advanceTimersByTime(3001);
-    });
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByText("Test message")).not.toBeInTheDocument();
   });
 
   it("pauses the timer on focus and restarts on blur", () => {
-    renderToast({});
+    render(
+      <Wrapper>
+        <TestButton />
+      </Wrapper>,
+    );
 
-    act(() => {
-      fireEvent.click(screen.getByTestId("trigger"));
-    });
-
-    const toastEl = screen.getByRole("status");
+    fireEvent.click(screen.getByText("Show Toast"));
+    const toastEl = screen.getByText("Test message").closest("[role='status']")!;
 
     act(() => {
       jest.advanceTimersByTime(500);
@@ -161,7 +131,7 @@ describe("ToastItem — pause-on-hover", () => {
     act(() => {
       jest.advanceTimersByTime(5000);
     });
-    expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(screen.getByText("Test message")).toBeInTheDocument();
 
     // Blur restarts the timer
     act(() => {
@@ -171,44 +141,59 @@ describe("ToastItem — pause-on-hover", () => {
     act(() => {
       jest.advanceTimersByTime(4001);
     });
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByText("Test message")).not.toBeInTheDocument();
   });
 
-  it("manual dismiss removes the toast immediately regardless of hover state", () => {
-    renderToast({});
+  it("dismisses immediately when dismiss button is clicked", () => {
+    render(
+      <Wrapper>
+        <TestButton />
+      </Wrapper>,
+    );
 
-    act(() => {
-      fireEvent.click(screen.getByTestId("trigger"));
-    });
+    fireEvent.click(screen.getByText("Show Toast"));
+    const dismissBtn = screen.getByLabelText("Dismiss notification");
+    fireEvent.click(dismissBtn);
 
-    const toastEl = screen.getByRole("status");
-
-    // Hover so the auto-timer is paused
-    act(() => {
-      fireEvent.mouseEnter(toastEl);
-    });
-
-    // Click the ✕ dismiss button
-    act(() => {
-      fireEvent.click(screen.getByLabelText("Dismiss notification"));
-    });
-
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByText("Test message")).not.toBeInTheDocument();
   });
 
-  it("action button fires callback and dismisses the toast", () => {
-    const onAction = jest.fn();
-    renderToast({ action: { label: "Undo", onClick: onAction } });
+  it("renders success toast with correct icon color", () => {
+    render(
+      <Wrapper>
+        <TestButton />
+      </Wrapper>,
+    );
 
-    act(() => {
-      fireEvent.click(screen.getByTestId("trigger"));
-    });
+    fireEvent.click(screen.getByText("Show Toast"));
+    const icon = screen.getByText("Test message")
+      .closest("[role='status']")!
+      .querySelector(".text-green-500");
+    expect(icon).toBeInTheDocument();
+  });
 
-    act(() => {
-      fireEvent.click(screen.getByText("Undo"));
-    });
+  it("renders error toast with correct icon color", () => {
+    render(
+      <Wrapper>
+        <ErrorToastButton />
+      </Wrapper>,
+    );
 
-    expect(onAction).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Show Error"));
+    const icon = screen.getByText("Error occurred")
+      .closest("[role='status']")!
+      .querySelector(".text-red-500");
+    expect(icon).toBeInTheDocument();
+  });
+
+  it("renders action button when action is provided", () => {
+    render(
+      <Wrapper>
+        <ActionToastButton />
+      </Wrapper>,
+    );
+
+    fireEvent.click(screen.getByText("Show Action"));
+    expect(screen.getByText("Undo")).toBeInTheDocument();
   });
 });

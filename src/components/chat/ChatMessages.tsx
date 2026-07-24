@@ -1,5 +1,6 @@
 "use client";
 
+import { useRateLimit } from "@/hooks/useRateLimit";
 import {
   BookOpen,
   Brain,
@@ -27,6 +28,7 @@ import {
   Check,
   Clock,
   Trash2,
+  X,
 } from "lucide-react";
 import { RefObject, useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
@@ -1205,10 +1207,18 @@ export function ChatInput({
   const MAX_CHARS = 2000;
   const charCount = safeInput.length;
   const isOverLimit = charCount > MAX_CHARS;
+  const retryAfter = useRateLimit("chat");
 
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [isFocused, setIsFocused] = useState(false);
   const [keyboardInset, setKeyboardInset] = useState(0);
+  const [shortcutLabel, setShortcutLabel] = useState("Ctrl+K");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleClear = () => {
+    onInputChange("");
+    inputRef.current?.focus();
+  };
 
   useEffect(() => {
     const history = localStorage.getItem("ws-recent-searches");
@@ -1219,6 +1229,15 @@ export function ChatInput({
         console.error(e);
       }
     }
+  }, []);
+
+  useEffect(() => {
+    const isApple =
+      typeof navigator !== "undefined" &&
+      /Mac|iPhone|iPad|iPod/i.test(
+        navigator.platform || navigator.userAgent || "",
+      );
+    setShortcutLabel(isApple ? "⌘K" : "Ctrl+K");
   }, []);
 
   // Keep the composer above the iOS soft keyboard / browser chrome.
@@ -1445,18 +1464,40 @@ export function ChatInput({
         >
           <Mic className="w-5 h-5" />
         </button>
-        <input
-          type="text"
-          value={safeInput}
-          onChange={(e) => onInputChange(e.target.value ?? "")}
-          onFocus={() => setIsFocused(true)}
-          onBlur={() => setIsFocused(false)}
-          placeholder={
-            isListening ? "Listening…" : "Where's the focus mode hotspot?"
-          }
-          disabled={isLoading}
-          className="flex-1 px-4 py-3 bg-transparent text-zinc-900 dark:text-zinc-50 placeholder:text-zinc-500 focus:placeholder-transparent focus:outline-none disabled:opacity-50 text-sm font-bold"
-        />
+        <div className="relative flex min-w-0 flex-1 items-center">
+          <input
+            ref={inputRef}
+            type="text"
+            value={safeInput}
+            onChange={(e) => onInputChange(e.target.value ?? "")}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
+            placeholder={
+              isListening ? "Listening…" : "Where's the focus mode hotspot?"
+            }
+            disabled={isLoading || retryAfter > 0}
+            className="w-full bg-transparent px-4 py-3 pr-16 text-sm font-bold text-zinc-900 placeholder:text-zinc-500 focus:placeholder-transparent focus:outline-none disabled:opacity-50 dark:text-zinc-50"
+          />
+          {safeInput.length > 0 && (
+            <button
+              type="button"
+              onClick={handleClear}
+              className="absolute right-2 p-1.5 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 rounded-full hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
+              aria-label="Clear search"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+          {!safeInput.trim() && (
+            <kbd
+              className="pointer-events-none absolute right-2 hidden select-none rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-wide text-zinc-400 shadow-sm sm:inline-block dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-500"
+              aria-hidden="true"
+              title="Focus search"
+            >
+              {shortcutLabel}
+            </kbd>
+          )}
+        </div>
 
         {/* ── Microphone button ──────────────────────────────────────────── */}
         <button
@@ -1479,11 +1520,15 @@ export function ChatInput({
         {/* ── Send button ────────────────────────────────────────────────── */}
         <button
           type="submit"
-          disabled={isLoading || !input.trim() || isOverLimit}
-          className="p-3 bg-[var(--primary-accent)] cursor-pointer hover:opacity-90 text-white rounded-xl disabled:opacity-30 transition-all active:scale-95 shadow-lg group"
+          disabled={isLoading || !input.trim() || isOverLimit || retryAfter > 0}
+          className="p-3 bg-[var(--primary-accent)] cursor-pointer hover:opacity-90 text-white rounded-xl disabled:opacity-30 transition-all active:scale-95 shadow-lg group flex items-center justify-center gap-1.5"
         >
           {isLoading ? (
             <Loader2 className="w-5 h-5 animate-spin" />
+          ) : retryAfter > 0 ? (
+            <span className="text-xs font-black whitespace-nowrap px-1">
+              Retry in {retryAfter}s
+            </span>
           ) : (
             <Send className="w-5 h-5 group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
           )}

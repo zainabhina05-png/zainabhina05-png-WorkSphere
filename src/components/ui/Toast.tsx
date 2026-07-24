@@ -89,6 +89,9 @@ function ToastContainer({
   );
 }
 
+/** Auto-dismiss timeout in milliseconds. */
+const TOAST_DURATION_MS = 4000;
+
 function ToastItem({
   toast,
   onRemove,
@@ -96,12 +99,20 @@ function ToastItem({
   toast: Toast;
   onRemove: (id: string) => void;
 }) {
+  const [isHovered, setIsHovered] = useState(false);
+
+  // Start/restart the 4-second dismiss timer whenever the hover state changes.
+  // When isHovered is true the effect returns early without setting a timer,
+  // effectively pausing auto-dismiss until the cursor/focus leaves.
   useEffect(() => {
+    if (isHovered) return;
+
     const timer = setTimeout(() => {
       onRemove(toast.id);
-    }, 4000);
+    }, TOAST_DURATION_MS);
+
     return () => clearTimeout(timer);
-  }, [toast.id, onRemove]);
+  }, [isHovered, toast.id, onRemove]);
 
   const Icon =
     toast.type === "success"
@@ -124,6 +135,10 @@ function ToastItem({
         "bg-white/90 dark:bg-zinc-900/90 border-zinc-200 dark:border-zinc-800",
         "animate-in slide-in-from-right-full fade-in duration-300",
       )}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onFocus={() => setIsHovered(true)}
+      onBlur={() => setIsHovered(false)}
     >
       <Icon className={cn("w-4 h-4 shrink-0", iconColor)} aria-hidden="true" />
       <div className="flex-1 flex flex-col items-start text-sm text-zinc-700 dark:text-zinc-300">

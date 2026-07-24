@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useUser as useClerkUser } from "@clerk/nextjs";
-import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
+import { useUser } from "@clerk/nextjs";
 import {
   MapPin,
   Star,
@@ -21,28 +20,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
-// Mock useUser for local development bypass if dummy keys are used
-const useUser = () => {
-  const isDummy =
-    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ===
-    "pk_test_ZXhhbXBsZS5hY2NvdW50cy5kZXYk";
-  // eslint-disable-next-line react-hooks/rules-of-hooks
-  const clerkUser = !isDummy ? useClerkUser() : null;
-
-  if (isDummy) {
-    return {
-      isLoaded: true,
-      isSignedIn: true,
-      user: {
-        firstName: "Nomad",
-        lastName: "Scout",
-        imageUrl: undefined as string | undefined,
-        emailAddresses: [{ emailAddress: "nomad.scout@worksphere.dev" }],
-      },
-    };
-  }
-  return clerkUser || { isLoaded: false, isSignedIn: false, user: null };
-};
+import { ReceiptVerificationModal } from "@/components/receipt/ReceiptVerificationModal";
 
 interface Badge {
   id: string;
@@ -100,143 +78,11 @@ export default function AnalyticsDashboard() {
   const [data, setData] = useState<UserAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [verifyModalOpen, setVerifyModalOpen] = useState(false);
 
   const fetchUserStats = async () => {
     setLoading(true);
     try {
-      if (
-        process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ===
-        "pk_test_ZXhhbXBsZS5hY2NvdW50cy5kZXYk"
-      ) {
-        const mockData: UserAnalytics = {
-          profile: {
-            id: "user_2test_dummy_id_12345",
-            email: "nomad.scout@worksphere.dev",
-            firstName: "Nomad",
-            lastName: "Scout",
-            joinedAt: new Date().toISOString(),
-          },
-          summary: {
-            totalResidencies: 8,
-            totalFavorites: 4,
-            totalRatings: 5,
-            totalConversations: 12,
-          },
-          history: {
-            bookings: [
-              {
-                id: "booking_1",
-                confirmationId: "WS-LEDGER-992A",
-                date: "2026-07-10",
-                time: "14:00 - 18:00",
-                status: "CONFIRMED",
-                venue: {
-                  name: "Cyber Cafe Oasis",
-                  category: "cafe",
-                  address: "128 Neon Blvd, Sector 7",
-                  latitude: 37.7749,
-                  longitude: -122.4194,
-                },
-              },
-              {
-                id: "booking_2",
-                confirmationId: "WS-LEDGER-881B",
-                date: "2026-07-09",
-                time: "09:00 - 17:00",
-                status: "CONFIRMED",
-                venue: {
-                  name: "Prism Coworking",
-                  category: "coworking",
-                  address: "456 Spectrum Way",
-                  latitude: 37.7858,
-                  longitude: -122.4008,
-                },
-              },
-            ],
-            favorites: [
-              {
-                id: "fav_1",
-                venue: {
-                  name: "Cyber Cafe Oasis",
-                  category: "cafe",
-                },
-              },
-              {
-                id: "fav_2",
-                venue: {
-                  name: "The Grid Library",
-                  category: "library",
-                },
-              },
-            ],
-            ratings: [
-              {
-                id: "rating_1",
-                venue: {
-                  name: "Cyber Cafe Oasis",
-                },
-                comment: "Great gigabit connection!",
-                wifiQuality: 5,
-                hasOutlets: true,
-                noiseLevel: "quiet",
-                createdAt: new Date().toISOString(),
-              },
-            ],
-          },
-          gamification: {
-            level: 3,
-            xp: 350,
-            xpInCurrentLevel: 50,
-            xpForNextLevel: 300,
-            progressPercent: 17,
-            xpBreakdown: {
-              reviewsXp: 150,
-              venuesXp: 100,
-              speedtestsXp: 100,
-            },
-            stats: {
-              reviewsCount: 3,
-              venuesAddedCount: 1,
-              speedtestsCount: 2,
-              uniqueCafesBooked: 2,
-              nightOwlReviewsCount: 1,
-            },
-            badges: [
-              {
-                id: "wifi_scout",
-                name: "WiFi Scout",
-                description: "Verified 3+ venue speedtests.",
-                earned: false,
-                progress: 2,
-                target: 3,
-                icon: "wifi",
-              },
-              {
-                id: "cafe_nomad",
-                name: "Cafe Nomad",
-                description: "Checked in/booked at 5 different cafes.",
-                earned: false,
-                progress: 2,
-                target: 5,
-                icon: "cafe",
-              },
-              {
-                id: "night_owl",
-                name: "Night Owl",
-                description: "Left reviews at venues after 9 PM.",
-                earned: true,
-                progress: 1,
-                target: 1,
-                icon: "moon",
-              },
-            ],
-          },
-        };
-        setData(mockData);
-        setLoading(false);
-        return;
-      }
-
       const res = await fetch("/api/analytics");
       const json = await res.json();
       setData(json);
@@ -257,148 +103,17 @@ export default function AnalyticsDashboard() {
   }) => {
     setDownloadingId(booking.id);
     try {
-      // Generate PDF entirely in the browser - blob: URLs bypass Service Worker completely!
-      const pdfDoc = await PDFDocument.create();
-      const page = pdfDoc.addPage([595, 842]); // A4
-      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-      const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-      const { width, height } = page.getSize();
-      let y = height - 50;
+      // Fetch the receipt from the server instead of generating on the main thread
+      const res = await fetch(`/api/bookings/${booking.id}/download`);
+      if (!res.ok) {
+        throw new Error("Failed to fetch receipt");
+      }
 
-      const safe = (t: string | undefined | null) =>
-        (t || "").replace(/[^\x20-\x7E]/g, "?");
-      const text = (t: string, opts: object) => {
-        try {
-          page.drawText(t, opts);
-        } catch {
-          /* skip */
-        }
-      };
-
-      // Header bar
-      page.drawRectangle({
-        x: 0,
-        y: height - 10,
-        width,
-        height: 10,
-        color: rgb(0.23, 0.51, 0.96),
-      });
-      y -= 60;
-      text("WORKSPHERE CONFIRMATION", {
-        x: 150,
-        y,
-        size: 24,
-        font: boldFont,
-        color: rgb(0, 0, 0),
-      });
-      y -= 15;
-      text("SECURE NEURAL TRANSACTION RECEIPT", {
-        x: 180,
-        y,
-        size: 8,
-        font,
-        color: rgb(0.5, 0.5, 0.5),
-      });
-      y -= 50;
-
-      // Details
-      text("BOOKING DETAILS:", {
-        x: 50,
-        y,
-        size: 12,
-        font: boldFont,
-        color: rgb(0, 0, 0),
-      });
-      y -= 15;
-      text("-".repeat(50), { x: 50, y, size: 10, font, color: rgb(0, 0, 0) });
-      y -= 20;
-      text(`REFERENCE ID: ${safe(booking.confirmationId)}`, {
-        x: 50,
-        y,
-        size: 10,
-        font,
-        color: rgb(0, 0, 0),
-      });
-      y -= 18;
-      text(`VENUE: ${safe(booking.venue.name)}`, {
-        x: 50,
-        y,
-        size: 10,
-        font,
-        color: rgb(0, 0, 0),
-      });
-      y -= 18;
-      text(`CATEGORY: ${safe(booking.venue.category?.toUpperCase())}`, {
-        x: 50,
-        y,
-        size: 10,
-        font,
-        color: rgb(0, 0, 0),
-      });
-      y -= 18;
-      text(`ADDRESS: ${safe(booking.venue.address || "Verified Workspace")}`, {
-        x: 50,
-        y,
-        size: 10,
-        font,
-        color: rgb(0, 0, 0),
-      });
-      y -= 18;
-      text(`SCHEDULE: ${safe(booking.date)} @ ${safe(booking.time)}`, {
-        x: 50,
-        y,
-        size: 10,
-        font,
-        color: rgb(0, 0, 0),
-      });
-      y -= 18;
-      text(`STATUS: ${safe(booking.status)}`, {
-        x: 50,
-        y,
-        size: 10,
-        font,
-        color: rgb(0, 0, 0),
-      });
-      y -= 40;
-
-      text("SECURITY PROTOCOL:", {
-        x: 50,
-        y,
-        size: 12,
-        font: boldFont,
-        color: rgb(0, 0, 0),
-      });
-      y -= 18;
-      text("ZERO-FEE ACCESS PROTOCOL ACTIVE", {
-        x: 50,
-        y,
-        size: 10,
-        font,
-        color: rgb(0, 0, 0),
-      });
-      y -= 18;
-      text("ENCRYPTED VIA WORKSPHERE L3", {
-        x: 50,
-        y,
-        size: 10,
-        font,
-        color: rgb(0, 0, 0),
-      });
-      y -= 80;
-      text(
-        "Thank you for choosing WorkSphere. Your workspace is ready for you.",
-        { x: 80, y, size: 8, font, color: rgb(0.4, 0.4, 0.4) },
-      );
-
-      const pdfBytes = await pdfDoc.save();
-      // blob: URLs are NEVER intercepted by Service Workers
-      const blob = new Blob([pdfBytes.buffer as ArrayBuffer], {
-        type: "application/pdf",
-      });
+      const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `WorkSphere_Receipt_${booking.confirmationId}.pdf`;
+      a.download = `WorkSphere_Receipt_${booking.confirmationId || booking.id}.pdf`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -439,16 +154,123 @@ export default function AnalyticsDashboard() {
 
   if (loading && !data) {
     return (
-      <div className="min-h-screen bg-white dark:bg-zinc-950 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <RefreshCw className="w-12 h-12 accent-text animate-spin" />
-          <div className="text-center">
-            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-500">
-              Decrypting Neural Identity...
-            </p>
-            <p className="text-[8px] font-bold text-zinc-400 mt-2 uppercase tracking-widest animate-pulse">
-              Syncing Cloud Ledger
-            </p>
+      <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-50 font-sans p-6 md:p-12">
+        <div className="max-w-7xl mx-auto space-y-12">
+          {/* Header Skeleton */}
+          <div className="flex flex-col md:flex-row justify-between gap-8">
+            <div className="space-y-4">
+              <div className="w-24 h-4 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse"></div>
+              <div className="flex items-center gap-4">
+                <div className="w-20 h-20 rounded-[2rem] bg-zinc-200 dark:bg-zinc-800 animate-pulse"></div>
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <div className="w-24 h-4 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse"></div>
+                    <div className="w-12 h-4 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse"></div>
+                  </div>
+                  <div className="w-64 h-10 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse"></div>
+                  <div className="w-40 h-3 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse"></div>
+                </div>
+              </div>
+            </div>
+            <div className="hidden lg:flex items-center gap-3">
+              <div className="w-14 h-14 rounded-2xl bg-zinc-200 dark:bg-zinc-800 animate-pulse"></div>
+              <div className="h-10 w-px bg-zinc-200 dark:bg-zinc-800 mx-2"></div>
+              <div className="space-y-2 text-right">
+                <div className="w-24 h-3 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse ml-auto"></div>
+                <div className="w-12 h-8 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse ml-auto"></div>
+              </div>
+            </div>
+          </div>
+
+          {/* Grid Skeleton */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+            {[1, 2, 3, 4].map((i) => (
+              <div
+                key={i}
+                className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-8 rounded-[2.5rem] shadow-sm"
+              >
+                <div className="w-16 h-16 rounded-2xl bg-zinc-200 dark:bg-zinc-800 animate-pulse mb-6"></div>
+                <div className="w-20 h-3 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse mb-3"></div>
+                <div className="w-16 h-8 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse"></div>
+              </div>
+            ))}
+          </div>
+
+          {/* Progress Card Skeleton */}
+          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-8 rounded-[2.5rem] shadow-sm">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-6">
+              <div className="space-y-3">
+                <div className="flex gap-3">
+                  <div className="w-20 h-5 rounded-full bg-zinc-200 dark:bg-zinc-800 animate-pulse"></div>
+                  <div className="w-24 h-3 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse mt-1"></div>
+                </div>
+                <div className="w-64 h-8 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse"></div>
+              </div>
+              <div className="space-y-3 md:text-right">
+                <div className="w-24 h-3 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse md:ml-auto"></div>
+                <div className="flex flex-wrap gap-4">
+                  <div className="w-20 h-3 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse"></div>
+                  <div className="w-20 h-3 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse"></div>
+                  <div className="w-24 h-3 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse"></div>
+                </div>
+              </div>
+            </div>
+            <div className="w-full h-4 bg-zinc-200 dark:bg-zinc-800 rounded-full animate-pulse"></div>
+          </div>
+
+          {/* Lists Skeleton */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
+            <div className="lg:col-span-2 space-y-6">
+              <div className="flex justify-between items-center">
+                <div className="w-48 h-6 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse"></div>
+                <div className="w-24 h-4 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse"></div>
+              </div>
+              <div className="grid gap-4">
+                {[1, 2, 3].map((i) => (
+                  <div
+                    key={i}
+                    className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-[2rem] p-6 flex flex-col md:flex-row gap-6 justify-between"
+                  >
+                    <div className="flex gap-5">
+                      <div className="w-16 h-16 rounded-[1.25rem] bg-zinc-200 dark:bg-zinc-800 animate-pulse"></div>
+                      <div className="space-y-2 py-1">
+                        <div className="w-32 h-5 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse"></div>
+                        <div className="w-24 h-3 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse"></div>
+                      </div>
+                    </div>
+                    <div className="flex gap-6 items-center">
+                      <div className="space-y-2 text-right">
+                        <div className="w-20 h-4 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse ml-auto"></div>
+                        <div className="w-16 h-3 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse ml-auto"></div>
+                      </div>
+                      <div className="flex gap-2">
+                        <div className="w-12 h-12 rounded-2xl bg-zinc-200 dark:bg-zinc-800 animate-pulse"></div>
+                        <div className="w-12 h-12 rounded-2xl bg-zinc-200 dark:bg-zinc-800 animate-pulse"></div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-8">
+              <div>
+                <div className="w-32 h-4 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse mb-6"></div>
+                <div className="space-y-3">
+                  {[1, 2, 3].map((i) => (
+                    <div
+                      key={i}
+                      className="bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 p-4 rounded-2xl flex gap-3"
+                    >
+                      <div className="w-10 h-10 rounded-xl bg-zinc-200 dark:bg-zinc-800 animate-pulse"></div>
+                      <div className="space-y-2 py-1 flex-1">
+                        <div className="w-24 h-4 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse"></div>
+                        <div className="w-16 h-3 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse"></div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -738,6 +560,13 @@ export default function AnalyticsDashboard() {
                         )}
                       </button>
                       <button
+                        onClick={() => setVerifyModalOpen(true)}
+                        className="p-4 bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded-2xl hover:scale-110 transition-transform shadow-sm"
+                        title="Verify Signature"
+                      >
+                        <ShieldCheck className="w-5 h-5" />
+                      </button>
+                      <button
                         onClick={() => handleViewVenue(booking.venue)}
                         className="p-4 bg-zinc-900 dark:bg-zinc-50 text-white dark:text-zinc-900 rounded-2xl hover:scale-110 transition-transform shadow-lg"
                         title="View on Map"
@@ -963,6 +792,10 @@ export default function AnalyticsDashboard() {
           </div>
         </div>
       </div>
+      <ReceiptVerificationModal
+        open={verifyModalOpen}
+        onClose={() => setVerifyModalOpen(false)}
+      />
     </div>
   );
 }

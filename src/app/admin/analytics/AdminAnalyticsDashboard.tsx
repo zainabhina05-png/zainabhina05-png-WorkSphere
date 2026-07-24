@@ -8,6 +8,8 @@ import {
   BarChart3,
   Bot,
   CalendarDays,
+  Download,
+  Gauge,
   RefreshCw,
   Search,
   Sparkles,
@@ -92,10 +94,58 @@ function MetricCard({
           <Icon className="h-5 w-5" />
         </span>
       </div>
-      <p className="text-3xl font-semibold tracking-tight text-white">{value}</p>
+      <p className="text-3xl font-semibold tracking-tight text-white">
+        {value}
+      </p>
       <p className="mt-2 text-xs text-zinc-500">{detail}</p>
     </article>
   );
+}
+
+function exportVenueCSV(data: AnalyticsData): void {
+  const rows = data.venueLeaderboard.map((venue) => ({
+    Timestamp: data.generatedAt,
+    "Venue ID": venue.id,
+    "Venue Name": `"${venue.name.replace(/"/g, '""')}"`,
+    Category: `"${venue.category}"`,
+    "Visitor Count": venue.views,
+    Bookings: venue.bookings,
+    Rating: venue.rating != null && !isNaN(venue.rating)
+      ? venue.rating.toFixed(1)
+      : "0.0",
+    Score: venue.score,
+  }));
+
+  const headers = [
+    "Timestamp",
+    "Venue ID",
+    "Venue Name",
+    "Category",
+    "Visitor Count",
+    "Bookings",
+    "Rating",
+    "Score",
+  ];
+
+  const csvContent = [
+    headers.join(","),
+    ...rows.map((row) =>
+      headers
+        .map((header) => String(row[header as keyof typeof row]))
+        .join(","),
+    ),
+  ].join("\n");
+
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `venue-analytics-${data.range}-${new Date(data.generatedAt).toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
 }
 
 export default function AdminAnalyticsDashboard() {
@@ -201,7 +251,19 @@ export default function AdminAnalyticsDashboard() {
               className="rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-zinc-300 transition hover:bg-white/[0.08] disabled:opacity-50"
               aria-label="Refresh analytics"
             >
-              <RefreshCw className={`h-5 w-5 ${loading ? "animate-spin" : ""}`} />
+              <RefreshCw
+                className={`h-5 w-5 ${loading ? "animate-spin" : ""}`}
+              />
+            </button>
+
+            <button
+              onClick={() => data && exportVenueCSV(data)}
+              disabled={!data || loading}
+              className="inline-flex items-center gap-2 rounded-2xl border border-violet-400/20 bg-violet-500/10 px-4 py-2.5 text-sm font-medium text-violet-200 transition hover:bg-violet-500/20 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+              aria-label="Export venue analytics to CSV"
+            >
+              <Download className="h-4 w-4" />
+              Export CSV
             </button>
           </div>
         </header>
@@ -211,6 +273,27 @@ export default function AdminAnalyticsDashboard() {
             {error}
           </div>
         )}
+
+        {/* ── Quick navigation to sub-dashboards ─────────────────────── */}
+        <nav
+          aria-label="Admin sub-dashboards"
+          className="mb-6 flex flex-wrap gap-3"
+        >
+          <Link
+            href="/admin/system"
+            className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-zinc-300 transition hover:bg-white/[0.08] hover:text-white"
+          >
+            <Gauge className="h-4 w-4 text-violet-400" />
+            System Health
+          </Link>
+          <Link
+            href="/admin/performance"
+            className="inline-flex items-center gap-2 rounded-2xl border border-cyan-400/20 bg-cyan-400/5 px-4 py-2.5 text-sm text-cyan-300 transition hover:bg-cyan-400/10 hover:text-white"
+          >
+            <Activity className="h-4 w-4" />
+            Performance Telemetry
+          </Link>
+        </nav>
 
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
           <MetricCard
@@ -264,8 +347,18 @@ export default function AdminAnalyticsDashboard() {
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={data?.bookingTrend ?? []}>
                   <defs>
-                    <linearGradient id="bookingFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.45} />
+                    <linearGradient
+                      id="bookingFill"
+                      x1="0"
+                      y1="0"
+                      x2="0"
+                      y2="1"
+                    >
+                      <stop
+                        offset="5%"
+                        stopColor="#8b5cf6"
+                        stopOpacity={0.45}
+                      />
                       <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
                     </linearGradient>
                   </defs>
@@ -413,9 +506,12 @@ export default function AdminAnalyticsDashboard() {
 
         <section className="mt-6 rounded-3xl border border-white/10 bg-white/[0.04] p-5">
           <div className="mb-6">
-            <h2 className="text-lg font-semibold">Venue popularity leaderboard</h2>
+            <h2 className="text-lg font-semibold">
+              Venue popularity leaderboard
+            </h2>
             <p className="mt-1 text-sm text-zinc-500">
-              Composite ranking based on views, non-cancelled bookings, and ratings
+              Composite ranking based on views, non-cancelled bookings, and
+              ratings
             </p>
           </div>
 
@@ -447,11 +543,27 @@ export default function AdminAnalyticsDashboard() {
                       </p>
                     </td>
                     <td className="px-3 py-4 text-zinc-300">{venue.views}</td>
-                    <td className="px-3 py-4 text-zinc-300">{venue.bookings}</td>
+                    <td className="px-3 py-4 text-zinc-300">
+                      {venue.bookings}
+                    </td>
                     <td className="px-3 py-4">
-                      <span className="inline-flex items-center gap-1 text-amber-300">
-                        <Star className="h-4 w-4 fill-current" />
-                        {venue.rating.toFixed(1)}
+                      <span
+                        className={`inline-flex items-center gap-1 ${
+                          (venue.rating ?? 0) > 0
+                            ? "text-amber-300"
+                            : "text-zinc-500"
+                        }`}
+                      >
+                        <Star
+                          className={`h-4 w-4 ${
+                            (venue.rating ?? 0) > 0
+                              ? "fill-current"
+                              : "text-zinc-500"
+                          }`}
+                        />
+                        {venue.rating != null && !isNaN(venue.rating)
+                          ? venue.rating.toFixed(1)
+                          : "0.0"}
                       </span>
                     </td>
                     <td className="px-3 py-4 font-medium text-violet-300">
@@ -465,7 +577,9 @@ export default function AdminAnalyticsDashboard() {
         </section>
 
         <footer className="mt-6 flex flex-col gap-2 text-xs text-zinc-600 sm:flex-row sm:items-center sm:justify-between">
-          <span>Admin-only · First-party analytics · No third-party tracking</span>
+          <span>
+            Admin-only · First-party analytics · No third-party tracking
+          </span>
           <span>
             {data?.generatedAt
               ? `Updated ${new Date(data.generatedAt).toLocaleString()}`

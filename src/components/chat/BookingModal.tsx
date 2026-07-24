@@ -20,13 +20,23 @@ import {
   CalendarPlus,
   Mail,
 } from "lucide-react";
-import { useState, useEffect, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useRef,
+  type MouseEvent,
+  type PointerEvent,
+} from "react";
 import confetti from "canvas-confetti";
 import { Venue } from "./ChatMessages";
 import { trackEvent } from "@/lib/analytics";
+import { ReceiptVerificationModal } from "@/components/receipt/ReceiptVerificationModal";
 
 import { getCalendarUrls, downloadICS } from "@/lib/calendar";
 import GuestsInput, { type GuestEntry } from "@/components/GuestsInput";
+import { shouldCloseFromBackdrop } from "@/lib/modal-interactions";
+import { apiFetch } from "@/lib/apiClient";
+import { useRateLimit } from "@/hooks/useRateLimit";
 
 interface Booking {
   id: string;
@@ -55,6 +65,8 @@ export function BookingModal({
   onClose,
   mode = "booking",
 }: BookingModalProps) {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const retryAfter = useRateLimit("book");
   const [step, setStep] = useState<
     "details" | "payment" | "processing" | "success" | "history"
   >("details");
@@ -67,6 +79,9 @@ export function BookingModal({
   };
   const [bookingDate, setBookingDate] = useState("");
   const [bookingTime, setBookingTime] = useState("");
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [recurringFrequency, setRecurringFrequency] = useState("weekly");
+  const [recurringOccurrences, setRecurringOccurrences] = useState(2);
   const [confirmationId, setConfirmationId] = useState("");
   const [email, setEmail] = useState("");
   const [billingCode, setBillingCode] = useState("");
@@ -74,8 +89,6 @@ export function BookingModal({
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isExporting, setIsExporting] = useState(false);
-  const [dateFilter, setDateFilter] = useState("all");
-
   const [guests, setGuests] = useState<GuestEntry[]>([]);
   const [guestInviteStatus, setGuestInviteStatus] = useState<
     "idle" | "sending" | "done"
@@ -86,8 +99,30 @@ export function BookingModal({
   const [showTaxId, setShowTaxId] = useState(false);
   const [includeNotes, setIncludeNotes] = useState(false);
   const [showLogo, setShowLogo] = useState(true);
+  const [dateFilter, setDateFilter] = useState("all");
+  const [verifyModalOpen, setVerifyModalOpen] = useState(false);
 
   const modalRef = useRef<HTMLDivElement>(null);
+  const pointerDownStartedOnBackdrop = useRef(false);
+
+  const handleBackdropPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    pointerDownStartedOnBackdrop.current = event.target === event.currentTarget;
+  };
+
+  const handleBackdropClick = (event: MouseEvent<HTMLDivElement>) => {
+    const clickEndedOnBackdrop = event.target === event.currentTarget;
+
+    if (
+      shouldCloseFromBackdrop(
+        pointerDownStartedOnBackdrop.current,
+        clickEndedOnBackdrop,
+      )
+    ) {
+      onClose();
+    }
+
+    pointerDownStartedOnBackdrop.current = false;
+  };
 
   // =========================================================================
   // CELEBRATORY CONFETTI SUCCESS TRIGGER OVERLAY
@@ -277,7 +312,7 @@ export function BookingModal({
     setShowLogo(true);
   };
 
-  const confirmDownloadSingle = () => {
+  const confirmDownloadSingle = async () => {
     if (!receiptDialogBookingId) return;
     const params = new URLSearchParams();
     if (showTaxId) params.append("showTaxId", "true");
@@ -285,7 +320,23 @@ export function BookingModal({
     if (showLogo) params.append("showLogo", "true");
 
     const url = `/api/bookings/${receiptDialogBookingId}/download${params.toString() ? `?${params.toString()}` : ""}`;
-    window.open(url, "_blank");
+
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      try {
+        const { queueOfflineReceipt } = await import("@/lib/offlineStorage");
+        await queueOfflineReceipt(
+          receiptDialogBookingId,
+          `WorkSphere_Receipt_${receiptDialogBookingId.slice(-6).toUpperCase()}.pdf`,
+        );
+        alert(
+          "You are currently offline. Your receipt request has been queued for background sync and will download automatically when you reconnect.",
+        );
+      } catch (err) {
+        console.error("Failed to queue offline receipt:", err);
+      }
+    } else {
+      window.open(url, "_blank");
+    }
     setReceiptDialogBookingId(null);
   };
 
@@ -320,8 +371,10 @@ export function BookingModal({
   if (!isOpen) return null;
 
   const handleBooking = async () => {
+    setIsSubmitting(true);
     const todayStr = getTodayString();
     if (bookingDate && bookingDate < todayStr) {
+      setIsSubmitting(false);
       alert("Cannot book a date in the past.");
       return;
     }
@@ -333,12 +386,41 @@ export function BookingModal({
     });
 
     try {
-      const response = await fetch("/api/bookings/confirm", {
+      const dates: string[] = [];
+      let currentDate = new Date(bookingDate);
+      // To handle local timezone parsing correctly without offset shifts:
+      const [yearStr, monthStr, dayStr] = bookingDate.split("-");
+      currentDate = new Date(
+        parseInt(yearStr),
+        parseInt(monthStr) - 1,
+        parseInt(dayStr),
+      );
+
+      const occurrences = isRecurring ? recurringOccurrences : 1;
+
+      for (let i = 0; i < occurrences; i++) {
+        const y = currentDate.getFullYear();
+        const m = String(currentDate.getMonth() + 1).padStart(2, "0");
+        const d = String(currentDate.getDate()).padStart(2, "0");
+        dates.push(`${y}-${m}-${d}`);
+
+        if (isRecurring) {
+          if (recurringFrequency === "daily") {
+            currentDate.setDate(currentDate.getDate() + 1);
+          } else if (recurringFrequency === "weekly") {
+            currentDate.setDate(currentDate.getDate() + 7);
+          } else if (recurringFrequency === "monthly") {
+            currentDate.setMonth(currentDate.getMonth() + 1);
+          }
+        }
+      }
+
+      const response = await apiFetch("/api/bookings/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           venue,
-          date: bookingDate,
+          dates,
           time: bookingTime,
           customerEmail: email,
           customerPhone: null,
@@ -385,19 +467,25 @@ export function BookingModal({
       }
     } catch (err: any) {
       console.error("Booking failure details:", err);
+      setIsSubmitting(false);
       setStep("details");
       alert(`NEURAL SIGNAL ERROR: ${err.message}`);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-[20000] flex items-center justify-center p-4 bg-zinc-950/90 animate-in fade-in duration-300 backdrop-blur-sm">
+    <div
+      className="fixed inset-0 z-[20000] flex items-center justify-center p-4 bg-zinc-950/90 animate-in fade-in duration-300 backdrop-blur-sm"
+      onPointerDown={handleBackdropPointerDown}
+      onClick={handleBackdropClick}
+    >
       <div
         ref={modalRef}
         role="dialog"
         aria-modal="true"
         className="bg-white dark:bg-zinc-900 w-full max-w-2xl overflow-hidden rounded-[2.5rem] shadow-[0_20px_100px_rgba(0,0,0,0.9)] border border-zinc-200 dark:border-zinc-800 animate-in zoom-in-95 duration-300"
-        onClick={(e) => e.stopPropagation()}
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
       >
         {/* Header */}
         <div className="p-8 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between bg-zinc-50/50 dark:bg-zinc-800/30">
@@ -687,6 +775,8 @@ export function BookingModal({
                       min={getTodayString()}
                       className="w-full pl-12 pr-6 py-4 bg-zinc-50 dark:bg-zinc-800 border-2 border-zinc-100 dark:border-zinc-700 rounded-[1.25rem] text-sm font-bold focus:ring-4 focus:ring-[color-mix(in_srgb,var(--primary-accent),transparent_0.8)] focus:accent-border outline-none transition-all"
                       value={bookingDate}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={(event) => event.stopPropagation()}
                       onChange={(e) => setBookingDate(e.target.value)}
                     />
                   </div>
@@ -709,6 +799,54 @@ export function BookingModal({
                     />
                   </div>
                 </div>
+              </div>
+
+              {/* Recurring UI */}
+              <div className="space-y-4">
+                <label className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-zinc-500 cursor-pointer select-none ml-2">
+                  <input
+                    type="checkbox"
+                    checked={isRecurring}
+                    onChange={(e) => setIsRecurring(e.target.checked)}
+                    className="w-4 h-4 cursor-pointer"
+                    style={{ accentColor: "var(--primary-accent)" }}
+                  />
+                  Recurring Booking
+                </label>
+
+                {isRecurring && (
+                  <div className="grid grid-cols-2 gap-6 pl-2">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">
+                        Frequency
+                      </label>
+                      <select
+                        value={recurringFrequency}
+                        onChange={(e) => setRecurringFrequency(e.target.value)}
+                        className="w-full px-4 py-3 bg-zinc-50 dark:bg-zinc-800 border-2 border-zinc-100 dark:border-zinc-700 rounded-[1.25rem] text-sm font-bold focus:ring-4 focus:ring-[color-mix(in_srgb,var(--primary-accent),transparent_0.8)] focus:accent-border outline-none transition-all"
+                      >
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">
+                        Occurrences
+                      </label>
+                      <input
+                        type="number"
+                        min="2"
+                        max="12"
+                        value={recurringOccurrences}
+                        onChange={(e) =>
+                          setRecurringOccurrences(parseInt(e.target.value) || 2)
+                        }
+                        className="w-full px-4 py-3 bg-zinc-50 dark:bg-zinc-800 border-2 border-zinc-100 dark:border-zinc-700 rounded-[1.25rem] text-sm font-bold focus:ring-4 focus:ring-[color-mix(in_srgb,var(--primary-accent),transparent_0.8)] focus:accent-border outline-none transition-all"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-4">
@@ -828,10 +966,38 @@ export function BookingModal({
 
               <button
                 onClick={handleBooking}
-                className="w-full bg-green-600 hover:bg-green-700 text-white font-black uppercase tracking-widest py-6 rounded-[1.5rem] flex items-center justify-center gap-3 shadow-2xl shadow-green-500/20 hover:scale-[1.02] transition-all active:scale-95"
+                disabled={isSubmitting}
+                className="w-full bg-green-600 hover:bg-green-700 disabled:bg-green-600/50 text-white font-black uppercase tracking-widest py-6 rounded-[1.5rem] flex items-center justify-center gap-3 shadow-2xl shadow-green-500/20 hover:scale-[1.02] disabled:hover:scale-100 transition-all active:scale-95 disabled:cursor-not-allowed"
               >
-                <Lock className="w-5 h-5 shadow-inner" />
-                Finalize Secure Protocol
+                {isSubmitting ? (
+                  <>
+                    <svg
+                      className="animate-spin h-5 w-5"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                    >
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      />
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                      />
+                    </svg>
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    <Lock className="w-5 h-5 shadow-inner" />
+                    Finalize Secure Protocol
+                  </>
+                )}
               </button>
             </div>
           )}
@@ -1013,6 +1179,15 @@ export function BookingModal({
                   Cancel
                 </button>
                 <button
+                  onClick={() => {
+                    confirmDownloadSingle();
+                    setVerifyModalOpen(true);
+                  }}
+                  className="py-3 px-4 border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded-xl text-xs font-black uppercase tracking-widest transition-colors"
+                >
+                  Verify
+                </button>
+                <button
                   onClick={confirmDownloadSingle}
                   className="flex-1 py-3 bg-[var(--primary-accent)] hover:opacity-90 text-white rounded-xl text-xs font-black uppercase tracking-widest transition-colors"
                 >
@@ -1023,6 +1198,10 @@ export function BookingModal({
           </div>
         )}
       </div>
+      <ReceiptVerificationModal
+        open={verifyModalOpen}
+        onClose={() => setVerifyModalOpen(false)}
+      />
     </div>
   );
 }

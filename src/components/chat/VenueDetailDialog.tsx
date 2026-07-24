@@ -48,6 +48,8 @@ import { useTranslation } from "react-i18next";
 
 import { Venue } from "./ChatMessages";
 import { RatingDistribution } from "./RatingDistribution";
+import { NoiseReportingWidget } from "@/components/noise/NoiseReportingWidget";
+import { AudioEqualizer } from "@/components/audio/AudioEqualizer";
 
 interface VenueDetailDialogProps {
   venue: Venue | null;
@@ -99,6 +101,9 @@ export function VenueDetailDialog({
     "wifi" | "outlets" | "noise" | null
   >(null);
   const [copied, setCopied] = useState(false);
+  // Floor plan seat selection state (used by floor plan component when rendered)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [selectedSeatId, setSelectedSeatId] = useState<string | null>(null);
 
   const handleShare = () => {
     if (!venue) return;
@@ -694,6 +699,20 @@ export function VenueDetailDialog({
     }
   }, [venue, isOpen, activeTab]);
 
+  // Effect 4: Reset floor plan seat selection on dialog close
+  useEffect(() => {
+    if (!isOpen) {
+      // Reset selected seat ID
+      setSelectedSeatId(null);
+
+      // Clear any active CSS classes from SVG seat elements
+      const seats = document.querySelectorAll(".floor-plan-seat.active");
+      seats.forEach((seat) => {
+        seat.classList.remove("active");
+      });
+    }
+  }, [isOpen]);
+
   const compressImage = (file: File): Promise<Blob> => {
     return new Promise((resolve) => {
       const reader = new FileReader();
@@ -1115,6 +1134,13 @@ export function VenueDetailDialog({
                 </div>
               )}
 
+              <div className="mb-6">
+                <NoiseReportingWidget
+                  venueId={venue.id}
+                  venueName={venue.name}
+                />
+              </div>
+
               {wifiPredictions.length > 0 && (
                 <div className="mb-6 bg-black/20 p-5 rounded-2xl border border-white/5 shadow-sm">
                   <h3 className="text-xs font-black uppercase tracking-widest text-zinc-200 mb-1 flex items-center gap-2">
@@ -1395,6 +1421,8 @@ export function VenueDetailDialog({
               )}
 
               <div className="space-y-6 mt-6">
+                <AudioEqualizer venueName={venue.name} />
+
                 <div className="accent-bg-10 p-5 rounded-2xl border accent-border-30">
                   <h3 className="text-xs font-black uppercase tracking-widest accent-text mb-2 flex items-center gap-2">
                     <Info className="w-4 h-4" />

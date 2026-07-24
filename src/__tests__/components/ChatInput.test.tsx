@@ -137,3 +137,105 @@ describe("ChatInput Recent Searches", () => {
     expect(screen.queryByText("Recent Searches")).not.toBeInTheDocument();
   });
 });
+
+describe("ChatInput keyboard inset", () => {
+  const listeners: Record<string, Array<() => void>> = {};
+
+  beforeEach(() => {
+    Object.keys(listeners).forEach((k) => delete listeners[k]);
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 800,
+    });
+    Object.defineProperty(window, "visualViewport", {
+      configurable: true,
+      value: {
+        height: 500,
+        offsetTop: 0,
+        addEventListener: (type: string, cb: () => void) => {
+          listeners[type] = listeners[type] || [];
+          listeners[type].push(cb);
+        },
+        removeEventListener: (type: string, cb: () => void) => {
+          listeners[type] = (listeners[type] || []).filter((fn) => fn !== cb);
+        },
+      },
+    });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, "visualViewport", {
+      configurable: true,
+      value: undefined,
+    });
+  });
+
+  it("pads the composer when the visual viewport shrinks", () => {
+    const { container } = render(
+      <ChatInput
+        input=""
+        isLoading={false}
+        onInputChange={jest.fn()}
+        onSubmit={jest.fn()}
+      />,
+    );
+
+    const wrap = container.firstChild as HTMLElement;
+    expect(wrap.style.paddingBottom).toContain("300px");
+  });
+});
+
+describe("ChatInput Ctrl+K shortcut badge", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("shows Ctrl+K badge in the empty search bar on non-Apple platforms", () => {
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "Win32",
+    });
+
+    render(
+      <ChatInput
+        input=""
+        isLoading={false}
+        onInputChange={jest.fn()}
+        onSubmit={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByTitle("Focus search")).toHaveTextContent("Ctrl+K");
+  });
+
+  it("shows ⌘K badge on Apple platforms", () => {
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "MacIntel",
+    });
+
+    render(
+      <ChatInput
+        input=""
+        isLoading={false}
+        onInputChange={jest.fn()}
+        onSubmit={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByTitle("Focus search")).toHaveTextContent("⌘K");
+  });
+
+  it("hides the shortcut badge when the search input has text", () => {
+    render(
+      <ChatInput
+        input="quiet cafe"
+        isLoading={false}
+        onInputChange={jest.fn()}
+        onSubmit={jest.fn()}
+      />,
+    );
+
+    expect(screen.queryByTitle("Focus search")).not.toBeInTheDocument();
+  });
+});

@@ -1,6 +1,6 @@
-import { SignIn } from "@clerk/nextjs";
 import Link from "next/link";
 import { MapPin, Sparkles } from "lucide-react";
+import { SignInClient } from "@/components/auth/SignInClient";
 
 export default function SignInPage() {
   return (
@@ -63,40 +63,7 @@ export default function SignInPage() {
             </Link>
           </div>
 
-          <div className="w-full">
-            <SignIn
-              appearance={{
-                elements: {
-                  rootBox: "mx-auto w-full",
-                  card: "bg-zinc-900/50 backdrop-blur-xl border border-zinc-800 shadow-2xl rounded-2xl",
-                  headerTitle: "text-white text-2xl font-bold",
-                  headerSubtitle: "text-zinc-400",
-                  socialButtonsBlockButton:
-                    "bg-zinc-800/80 border-zinc-700 text-white hover:bg-zinc-700 transition-all rounded-xl",
-                  socialButtonsBlockButtonText: "text-white font-medium",
-                  dividerLine: "bg-zinc-700",
-                  dividerText: "text-zinc-500",
-                  formFieldLabel: "text-zinc-300 font-medium",
-                  formFieldInput:
-                    "bg-zinc-800/80 border-zinc-700 text-white placeholder:text-zinc-500 rounded-xl focus:border-[var(--primary-accent)] focus:ring-[color-mix(in_srgb,var(--primary-accent),transparent_0.8)]",
-                  footerActionLink: "accent-text font-medium",
-                  formButtonPrimary:
-                    "accent-bg hover:opacity-90 text-white rounded-xl shadow-lg shadow-[var(--primary-accent)]/20 transition-all",
-                  footer: "hidden",
-                },
-              }}
-              routing="path"
-              path="/sign-in"
-              signUpUrl="/sign-up"
-            />
-          </div>
-
-          <p className="mt-6 text-center text-sm text-zinc-500">
-            Don&apos;t have an account?{" "}
-            <Link href="/sign-up" className="accent-text font-medium">
-              Sign up free
-            </Link>
-          </p>
+          <SignInClient />
         </div>
       </div>
     </div>

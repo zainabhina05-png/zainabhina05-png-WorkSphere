@@ -1,12 +1,29 @@
-import "@testing-library/jest-dom";
-import { TextEncoder, TextDecoder } from "util";
-import { webcrypto } from "crypto";
+require("@testing-library/jest-dom");
+const { TextEncoder, TextDecoder } = require("util");
+const { webcrypto } = require("crypto");
 // jsdom doesn't provide these globals; Node's implementations are drop-in
 // replacements and let us test Edge-runtime-style code (e.g. src/lib/csrf.ts)
 // under the standard jsdom test environment.
 if (typeof global.TextEncoder === "undefined") {
   global.TextEncoder = TextEncoder;
   global.TextDecoder = TextDecoder;
+}
+
+const { ReadableStream, TransformStream, WritableStream } = require("stream/web");
+if (typeof global.ReadableStream === "undefined") {
+  global.ReadableStream = ReadableStream;
+}
+if (typeof global.TransformStream === "undefined") {
+  global.TransformStream = TransformStream;
+}
+if (typeof global.WritableStream === "undefined") {
+  global.WritableStream = WritableStream;
+}
+
+const { MessageChannel, MessagePort } = require("worker_threads");
+if (typeof global.MessageChannel === "undefined") {
+  global.MessageChannel = MessageChannel;
+  global.MessagePort = MessagePort;
 }
 
 /* eslint-disable @typescript-eslint/no-require-imports */
@@ -43,7 +60,7 @@ if (typeof global.crypto === "undefined" || !global.crypto.subtle) {
 if (typeof global.structuredClone === "undefined") {
   global.structuredClone = (val) => JSON.parse(JSON.stringify(val));
 }
-import "fake-indexeddb/auto";
+require("fake-indexeddb/auto");
 
 // Mock Leaflet global variable L
 global.L = {

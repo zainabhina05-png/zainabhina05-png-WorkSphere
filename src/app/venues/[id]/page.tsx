@@ -7,16 +7,18 @@ import { TopNav } from "@/components/TopNav";
 import SiteFooter from "@/components/site-footer";
 import PremiumZkpGate from "@/components/venues/PremiumZkpGate";
 import { isPremiumVenue } from "@/lib/zkp/membership";
+import { CollaborativeNotes } from "@/components/bookings/CollaborativeNotes"; // <-- 1. Imported your new component here!
 
 interface PageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 export async function generateMetadata({
   params,
 }: PageProps): Promise<Metadata> {
+  const { id } = await params;
   const venue = await prisma.venue.findUnique({
-    where: { id: params.id },
+    where: { id },
   });
 
   if (!venue) {
@@ -57,8 +59,9 @@ export async function generateMetadata({
 }
 
 export default async function VenuePage({ params }: PageProps) {
+  const { id } = await params;
   const venue = await prisma.venue.findUnique({
-    where: { id: params.id },
+    where: { id },
   });
 
   if (!venue) {
@@ -167,6 +170,9 @@ export default async function VenuePage({ params }: PageProps) {
               ) : null}
             </div>
 
+            {/* 2. Injected the CollaborativeNotes component here! */}
+            <CollaborativeNotes roomId={venue.id} placeholder={`Shared notes for ${venue.name}...`} />
+
             <div className="pt-6 border-t border-zinc-100 dark:border-zinc-800 space-y-4">
               {isPremiumVenue(venue) && (
                 <PremiumZkpGate venueId={venue.id} venueName={venue.name} />
@@ -176,6 +182,12 @@ export default async function VenuePage({ params }: PageProps) {
                 className="w-full flex items-center justify-center py-4 rounded-2xl accent-bg hover:opacity-90 text-white font-black text-sm uppercase tracking-widest transition-all shadow-xl shadow-[var(--primary-accent)]/20 active:scale-[0.98]"
               >
                 Open in WorkSphere
+              </Link>
+              <Link
+                href={`/venues/${venue.id}/navigate`}
+                className="w-full flex items-center justify-center py-4 rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-white font-black text-sm uppercase tracking-widest transition-all shadow-xl shadow-zinc-800/20 active:scale-[0.98]"
+              >
+                Start AR Navigation
               </Link>
             </div>
           </div>

@@ -1,16 +1,28 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
+import { useUser } from "@clerk/nextjs";
+import { useSearchParams } from "next/navigation";
 import {
   CalendarDays,
   Check,
   Clock3,
-  
   MapPin,
   Navigation,
   Share2,
   UsersRound,
+  Link2,
+  ShieldCheck,
+  AlertCircle,
 } from "lucide-react";
+import ScreenSharePanel from "@/components/sessions/ScreenSharePanel";
+import Scratchpad from "@/components/sessions/Scratchpad";
+import { MeshCallGrid } from "@/components/audio/MeshCallGrid";
+import {
+  generateSessionInviteToken,
+  validateSessionInviteToken,
+  ValidationResult,
+} from "@/lib/sessionInviteTokens";
 
 type Props = {
   session: {
@@ -21,6 +33,7 @@ type Props = {
     endsAt: string;
     maxGuests: number | null;
     host: {
+      id: string;
       firstName: string | null;
       lastName: string | null;
     };
@@ -44,12 +57,31 @@ type Props = {
 };
 
 export default function SessionDetailClient({ session }: Props) {
+  const { user } = useUser();
+  const searchParams = useSearchParams();
   const [rsvps, setRsvps] = useState(session.rsvps);
   const [message, setMessage] = useState("");
+  const [copiedInvite, setCopiedInvite] = useState(false);
+  const [inviteValidation, setInviteValidation] =
+    useState<ValidationResult | null>(null);
+
   const going = useMemo(
     () => rsvps.filter((item) => item.status === "GOING"),
     [rsvps],
   );
+
+  const inviteTokenParam = searchParams?.get("inviteToken");
+
+  useEffect(() => {
+    if (inviteTokenParam) {
+      const result = validateSessionInviteToken(
+        inviteTokenParam,
+        going.length,
+        session.slug,
+      );
+      setInviteValidation(result);
+    }
+  }, [inviteTokenParam, going.length, session.slug]);
 
   const hostName =
     [session.host.firstName, session.host.lastName].filter(Boolean).join(" ") ||
@@ -97,6 +129,29 @@ export default function SessionDetailClient({ session }: Props) {
     }
   }
 
+  async function copyInviteLink() {
+    try {
+      const token = await generateSessionInviteToken(
+        session.slug,
+        24,
+        session.maxGuests || undefined,
+      );
+      const origin =
+        typeof window !== "undefined" ? window.location.origin : "";
+      const inviteUrl = `${origin}/sessions/${session.slug}?inviteToken=${token}`;
+
+      await navigator.clipboard.writeText(inviteUrl);
+      setCopiedInvite(true);
+      setMessage(
+        "Secure invite link copied to clipboard! (Expires in 24 hours)",
+      );
+      setTimeout(() => setCopiedInvite(false), 3000);
+    } catch (err) {
+      console.error("Failed to generate invite link:", err);
+      setMessage("Failed to generate invite link.");
+    }
+  }
+
   return (
     <main className="min-h-screen bg-[#07070a] px-5 py-10 text-white">
       <div className="mx-auto max-w-5xl">
@@ -119,35 +174,131 @@ export default function SessionDetailClient({ session }: Props) {
             )}
 
             <div className="mt-8 grid gap-3 sm:grid-cols-2">
-              <Info icon={<CalendarDays className="h-5 w-5" />} title="Starts" value={new Date(session.startsAt).toLocaleString()} />
-              <Info icon={<Clock3 className="h-5 w-5" />} title="Ends" value={new Date(session.endsAt).toLocaleString()} />
-              <Info icon={<MapPin className="h-5 w-5" />} title="Workspace" value={session.venue.name} />
-              <Info icon={<UsersRound className="h-5 w-5" />} title="Attendance" value={`${going.length}${session.maxGuests ? ` / ${session.maxGuests}` : ""} going`} />
+              <Info
+                icon={<CalendarDays className="h-5 w-5" />}
+                title="Starts"
+                value={new Date(session.startsAt).toLocaleString()}
+              />
+              <Info
+                icon={<Clock3 className="h-5 w-5" />}
+                title="Ends"
+                value={new Date(session.endsAt).toLocaleString()}
+              />
+              <Info
+                icon={<MapPin className="h-5 w-5" />}
+                title="Workspace"
+                value={session.venue.name}
+              />
+              <Info
+                icon={<UsersRound className="h-5 w-5" />}
+                title="Attendance"
+                value={`${going.length}${session.maxGuests ? ` / ${session.maxGuests}` : ""} going`}
+              />
             </div>
+
+            {inviteValidation && (
+              <div
+                className={`mt-4 flex items-center gap-3 p-4 rounded-xl border ${
+                  inviteValidation.valid
+                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                    : "border-red-500/30 bg-red-500/10 text-red-200"
+                }`}
+              >
+                {inviteValidation.valid ? (
+                  <ShieldCheck className="h-5 w-5 shrink-0 text-emerald-400" />
+                ) : (
+                  <AlertCircle className="h-5 w-5 shrink-0 text-red-400" />
+                )}
+                <div className="text-sm">
+                  {inviteValidation.valid ? (
+                    <span>
+                      <strong className="font-semibold">
+                        Private Invite Verified:
+                      </strong>{" "}
+                      You accessed this session via a valid invite link.
+                    </span>
+                  ) : (
+                    <span>
+                      <strong className="font-semibold">
+                        Invite Link Invalid:
+                      </strong>{" "}
+                      {inviteValidation.error}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div className="mt-8 flex flex-wrap gap-3">
-              <button onClick={() => respond("GOING")} className="rounded-xl bg-violet-600 px-5 py-3 font-medium hover:bg-violet-500">
+              <button
+                onClick={() => respond("GOING")}
+                className="rounded-xl bg-violet-600 px-5 py-3 font-medium hover:bg-violet-500"
+              >
                 I’m going
               </button>
-              <button onClick={() => respond("MAYBE")} className="rounded-xl border border-white/10 bg-white/5 px-5 py-3 font-medium hover:bg-white/10">
+              <button
+                onClick={() => respond("MAYBE")}
+                className="rounded-xl border border-white/10 bg-white/5 px-5 py-3 font-medium hover:bg-white/10"
+              >
                 Maybe
               </button>
-              <button onClick={share} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-5 py-3 font-medium hover:bg-white/10">
+              <button
+                onClick={share}
+                className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-5 py-3 font-medium hover:bg-white/10"
+              >
                 <Share2 className="h-4 w-4" /> Share
+              </button>
+              <button
+                onClick={copyInviteLink}
+                className="inline-flex items-center gap-2 rounded-xl border border-violet-500/30 bg-violet-500/15 px-5 py-3 font-medium text-violet-200 hover:bg-violet-500/25 transition-colors"
+                title="Generate and copy WebCrypto secure invite link"
+              >
+                {copiedInvite ? (
+                  <>
+                    <Check className="h-4 w-4 text-emerald-400" /> Copied!
+                  </>
+                ) : (
+                  <>
+                    <Link2 className="h-4 w-4" /> Copy Invite Link
+                  </>
+                )}
               </button>
             </div>
 
-            {message && <p className="mt-4 text-sm text-violet-200">{message}</p>}
+            {message && (
+              <p className="mt-4 text-sm text-violet-200">{message}</p>
+            )}
+
+            <ScreenSharePanel
+              sessionSlug={session.slug}
+              hostId={session.host.id}
+              currentUserId={user?.id}
+            />
+
+            <div className="mt-8">
+              <MeshCallGrid
+                sessionSlug={session.slug}
+                hostId={session.host.id}
+              />
+            </div>
+
+            <div className="mt-8">
+              <Scratchpad sessionId={session.slug} />
+            </div>
           </section>
 
           <aside className="space-y-6">
             <div className="rounded-[2rem] border border-white/10 bg-white/[0.04] p-6">
               <h2 className="text-lg font-semibold">Location</h2>
-              <p className="mt-2 text-sm text-zinc-400">{session.venue.address}</p>
+              <p className="mt-2 text-sm text-zinc-400">
+                {session.venue.address}
+              </p>
 
               <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-zinc-300">
                 <div>Lat: {session.venue.latitude.toFixed(5)}</div>
-                <div className="mt-1">Lng: {session.venue.longitude.toFixed(5)}</div>
+                <div className="mt-1">
+                  Lng: {session.venue.longitude.toFixed(5)}
+                </div>
               </div>
 
               <a
@@ -166,17 +317,18 @@ export default function SessionDetailClient({ session }: Props) {
               <div className="mt-4 space-y-3">
                 {going.map((item) => {
                   const name =
-                    [item.user.firstName, item.user.lastName].filter(Boolean).join(" ") ||
-                    "WorkSphere member";
+                    [item.user.firstName, item.user.lastName]
+                      .filter(Boolean)
+                      .join(" ") || "WorkSphere member";
 
                   return (
                     <div key={item.user.id} className="flex items-center gap-3">
                       {item.user.imageUrl ? (
                         /* eslint-disable-next-line @next/next/no-img-element */
-                        <img 
-                          src={item.user.imageUrl} 
-                          alt={name} 
-                          className="h-9 w-9 rounded-full object-cover border border-white/10" 
+                        <img
+                          src={item.user.imageUrl}
+                          alt={name}
+                          className="h-9 w-9 rounded-full object-cover border border-white/10"
                         />
                       ) : (
                         <span className="flex h-9 w-9 items-center justify-center rounded-full bg-violet-500/15 text-violet-200">

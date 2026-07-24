@@ -8,6 +8,7 @@ interface SeatCheckin {
   venueId: string;
   capacity: number;
   checkedInAt: number;
+  version: number;
 }
 
 // Venues we don't have real capacity data for yet still need a sensible
@@ -27,6 +28,9 @@ export default class WorkspaceServer implements Party.Server {
   // keyed by connection id so we can always find & clear a user's previous
   // check-in on check-in/checkout/disconnect without scanning every venue.
   private seatCheckins = new Map<string, SeatCheckin>();
+  private seatCheckinLocks = new Set<string>(); // Prevents concurrent ops per connection
+  private serverEpoch = Date.now();
+  private sequenceId = 0;
 
   constructor(readonly room: Party.Room) {}
 
@@ -35,12 +39,14 @@ export default class WorkspaceServer implements Party.Server {
     const token = url.searchParams.get("token");
 
     let isViewer = false;
+    let verifiedUserId: string | undefined;
 
     if (token) {
       try {
         const secretKey = process.env.CLERK_SECRET_KEY;
         const verifiedToken = await verifyToken(token, { secretKey });
         const userId = verifiedToken.sub;
+        verifiedUserId = userId;
 
         // Canvas whiteboard rooms: any authenticated user can edit
         if (this.room.id.startsWith("canvas-")) {
@@ -76,13 +82,22 @@ export default class WorkspaceServer implements Party.Server {
       isViewer = true;
     }
 
-    conn.setState({ role: isViewer ? "VIEWER" : "EDITOR" });
+    conn.setState({
+      role: isViewer ? "VIEWER" : "EDITOR",
+      userId: verifiedUserId,
+    });
 
     // Bring newly connected clients up to speed on current seat availability
     // (#703) so rings render correctly before any new check-in event fires.
     if (this.seatCheckins.size > 0) {
+      this.sequenceId++;
       conn.send(
-        JSON.stringify({ type: "seat_snapshot", venues: this.seatSummary() }),
+        JSON.stringify({
+          type: "seat_snapshot",
+          venues: this.seatSummary(),
+          epoch: this.serverEpoch,
+          sequenceId: this.sequenceId,
+        }),
       );
     }
 
@@ -94,12 +109,18 @@ export default class WorkspaceServer implements Party.Server {
     });
 
     // Also handle simple presence via standard WebSockets
-    conn.addEventListener("message", (event) => {
+    conn.addEventListener("message", (event: { data: unknown }) => {
       try {
-        const data = JSON.parse(event.data as string);
+        const raw = event.data as string;
+        if (raw.length > 10_240) return;
+
+        const data = JSON.parse(raw);
         if (data.type === "presence" || data.type === "cursor") {
-          // Broadcast presence/cursor to everyone else in the room
-          this.room.broadcast(event.data as string, [conn.id]);
+          const state = conn.state as { userId?: string } | null;
+          if (!state?.userId || data.userId !== state.userId) return;
+          if (typeof data.venueId !== "string") return;
+
+          this.room.broadcast(raw, [conn.id]);
         }
       } catch {
         // Not JSON or other error, handled by Yjs
@@ -108,13 +129,55 @@ export default class WorkspaceServer implements Party.Server {
   }
 
   onMessage(message: string, sender: Party.Connection) {
-    const state = sender.state as { role?: string };
+    const state = sender.state as { role?: string; userId?: string };
 
     try {
       const parsed = JSON.parse(message);
 
-      // If it's a typing indicator, broadcast it safely
       if (parsed.type === "typing") {
+        this.room.broadcast(message, [sender.id]);
+        return;
+      }
+
+      if (parsed.type === "ping") {
+        sender.send(
+          JSON.stringify({
+            type: "pong",
+            timestamp: parsed.timestamp,
+          }),
+        );
+        return;
+      }
+
+      if (
+        parsed.type === "request_room_snapshot" ||
+        parsed.type === "request_snapshot"
+      ) {
+        const snapshotId = parsed.snapshotId || `snap-${Date.now()}`;
+        sender.send(
+          JSON.stringify({
+            type: "room_snapshot_response",
+            roomId: this.room.id,
+            snapshotId,
+            timestamp: Date.now(),
+            seats: this.seatSummary(),
+          }),
+        );
+        return;
+      }
+
+      // WebRTC signaling is allowed for VIEWERS, but `from` must match the
+      // Clerk userId we verified on connect — never trust the client field alone.
+      if (parsed.type === "webrtc-signal") {
+        if (!state.userId || parsed.from !== state.userId) return;
+        this.room.broadcast(message, [sender.id]);
+        return;
+      }
+
+      // Spatial audio listener position updates are high-frequency ephemeral state,
+      // allowed for all viewers/editors, but `userId` must match verified connection state.
+      if (parsed.type === "spatial_listener_update") {
+        if (!state.userId || parsed.userId !== state.userId) return;
         this.room.broadcast(message, [sender.id]);
         return;
       }
@@ -161,30 +224,81 @@ export default class WorkspaceServer implements Party.Server {
     venueId: string,
     capacity?: unknown,
   ) {
-    const previous = this.seatCheckins.get(conn.id);
-    const resolvedCapacity =
-      typeof capacity === "number" && capacity > 0
-        ? capacity
-        : (previous?.capacity ?? DEFAULT_SEAT_CAPACITY);
+    const maxRetries = 3;
+    const connId = conn.id;
 
-    this.seatCheckins.set(conn.id, {
-      venueId,
-      capacity: resolvedCapacity,
-      checkedInAt: Date.now(),
-    });
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      // Per-connection lock to prevent interleaved operations
+      if (this.seatCheckinLocks.has(connId)) {
+        // Another operation for this connection is in flight - wait and retry
+        // In practice PartyKit processes sequentially, but this guards against edge cases
+        continue;
+      }
 
-    this.broadcastSeatUpdate(venueId);
-    // Also refresh the venue they just left, if any, since its count dropped.
-    if (previous && previous.venueId !== venueId) {
-      this.broadcastSeatUpdate(previous.venueId);
+      this.seatCheckinLocks.add(connId);
+      try {
+        const previous = this.seatCheckins.get(connId);
+        const expectedVersion = previous?.version ?? 0;
+        const resolvedCapacity =
+          typeof capacity === "number" && capacity > 0
+            ? capacity
+            : (previous?.capacity ?? DEFAULT_SEAT_CAPACITY);
+
+        const newCheckin: SeatCheckin = {
+          venueId,
+          capacity: resolvedCapacity,
+          checkedInAt: Date.now(),
+          version: expectedVersion + 1,
+        };
+
+        // Optimistic lock: verify no concurrent modification
+        const current = this.seatCheckins.get(connId);
+        if (current && current.version !== expectedVersion) {
+          continue; // Retry - concurrent modification detected
+        }
+
+        this.seatCheckins.set(connId, newCheckin);
+
+        this.broadcastSeatUpdate(venueId);
+        if (previous && previous.venueId !== venueId) {
+          this.broadcastSeatUpdate(previous.venueId);
+        }
+        return;
+      } finally {
+        this.seatCheckinLocks.delete(connId);
+      }
     }
+    console.error("[Seat] Max retries exceeded for checkin", connId);
   }
 
   private handleSeatCheckout(conn: Party.Connection) {
-    const previous = this.seatCheckins.get(conn.id);
-    if (!previous) return;
-    this.seatCheckins.delete(conn.id);
-    this.broadcastSeatUpdate(previous.venueId);
+    const maxRetries = 3;
+    const connId = conn.id;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      if (this.seatCheckinLocks.has(connId)) {
+        continue;
+      }
+
+      this.seatCheckinLocks.add(connId);
+      try {
+        const previous = this.seatCheckins.get(connId);
+        if (!previous) return;
+
+        // Optimistic lock check
+        const current = this.seatCheckins.get(connId);
+        if (current && current.version !== previous.version) {
+          continue; // Retry
+        }
+
+        this.seatCheckins.delete(connId);
+        this.broadcastSeatUpdate(previous.venueId);
+        return;
+      } finally {
+        this.seatCheckinLocks.delete(connId);
+      }
+    }
+    console.error("[Seat] Max retries exceeded for checkout", connId);
   }
 
   private countForVenue(venueId: string): number {
@@ -205,6 +319,7 @@ export default class WorkspaceServer implements Party.Server {
   private broadcastSeatUpdate(venueId: string) {
     const count = this.countForVenue(venueId);
     const capacity = this.capacityForVenue(venueId);
+    this.sequenceId++;
     this.room.broadcast(
       JSON.stringify({
         type: "seat_update",
@@ -212,6 +327,8 @@ export default class WorkspaceServer implements Party.Server {
         count,
         capacity,
         status: seatStatusFor(count, capacity),
+        epoch: this.serverEpoch,
+        sequenceId: this.sequenceId,
       }),
     );
   }

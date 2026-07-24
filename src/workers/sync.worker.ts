@@ -2,6 +2,7 @@ import {
   getQueuedFavorites,
   dequeueOfflineAction,
   incrementRetryCount,
+  restoreFailedPayload,
   MAX_SYNC_RETRIES,
 } from "../lib/offlineStore";
 
@@ -62,6 +63,12 @@ function recordSuccess() {
   cbState = "CLOSED";
 }
 
+function resetCircuitBreaker() {
+  cbFailures = 0;
+  cbState = "CLOSED";
+  cbOpenTimestamp = 0;
+}
+
 function recordFailure() {
   cbFailures++;
   if (cbState === "HALF_OPEN" || cbFailures >= CB_MAX_FAILURES) {
@@ -90,6 +97,16 @@ async function processOutbox() {
       }
 
       while (actions.length > 0) {
+        // Stop if device is offline
+        if (
+          typeof self !== "undefined" &&
+          self.navigator &&
+          !self.navigator.onLine
+        ) {
+          console.warn("[Sync Worker] Device is offline. Pausing sync queue.");
+          break;
+        }
+
         if (!checkCircuitBreaker()) {
           console.warn("[Sync Worker] Circuit breaker is OPEN. Pausing sync.");
           break; // Stop processing, wait for next WAKE_UP or timeout
@@ -101,9 +118,14 @@ async function processOutbox() {
           continue;
         }
 
-        // Calculate backoff delay with jitter
+        // Calculate backoff delay with jitter (only if online and previous retries failed on server)
         const attempt = action.retryCount || 0;
-        if (attempt > 0) {
+        if (
+          attempt > 0 &&
+          typeof self !== "undefined" &&
+          self.navigator &&
+          self.navigator.onLine
+        ) {
           const delay = Math.min(
             MAX_DELAY_MS,
             BASE_DELAY_MS * Math.pow(2, attempt),
@@ -117,7 +139,13 @@ async function processOutbox() {
           await new Promise((resolve) => setTimeout(resolve, totalDelay));
         }
 
-        // Re-check circuit breaker after sleep, just in case
+        // Re-check circuit breaker and online status after sleep
+        if (
+          typeof self !== "undefined" &&
+          self.navigator &&
+          !self.navigator.onLine
+        )
+          break;
         if (!checkCircuitBreaker()) break;
 
         try {
@@ -144,6 +172,51 @@ async function processOutbox() {
           throw new Error(`Sync request failed with status ${response.status}`);
         } catch (error: any) {
           console.error("[Sync Worker] Failed to sync favorite:", error);
+
+          // -------------------------------------------------------------------
+          // Distinguish network errors (TypeError) from server errors.
+          //
+          // fetch() throws TypeError for network failures:
+          //   - DNS resolution failures
+          //   - TCP connection timeouts / resets
+          //   - TLS handshake failures
+          //   - Premature connection close while reading body
+          //
+          // For network errors we MUST NOT:
+          //   - Increment retryCount (it would exhaust MAX_SYNC_RETRIES unfairly)
+          //   - Trip the circuit breaker (network is transient, not a server issue)
+          //   - Dequeue the item (would lose data permanently)
+          //
+          // Instead we restore the payload (reset retryCount to 0) so the item
+          // is re-attempted fresh on the next WAKE_UP cycle.
+          // -------------------------------------------------------------------
+          const isNetworkError = error instanceof TypeError;
+
+          if (isNetworkError) {
+            console.warn(
+              "[Sync Worker] Network error detected (fetch TypeError). Restoring payload without retry penalty.",
+            );
+            await restoreFailedPayload(action.id!);
+            // Break the loop — device may have gone offline mid-sync.
+            // The next WAKE_UP (from online event, visibility change, or
+            // next page load) will re-process the queue from scratch.
+            break;
+          }
+
+          // If failure is due to device being offline (navigator.onLine),
+          // do NOT penalize or dequeue outbox item
+          if (
+            typeof self !== "undefined" &&
+            self.navigator &&
+            !self.navigator.onLine
+          ) {
+            console.warn(
+              "[Sync Worker] Offline network error; restoring payload without penalty.",
+            );
+            await restoreFailedPayload(action.id!);
+            break;
+          }
+
           recordFailure();
           sendMessage({ type: "SYNC_ERROR", error: error.message });
 
@@ -201,6 +274,13 @@ async function processOutbox() {
 // -----------------------------------------------------------------------------
 self.addEventListener("message", (event: MessageEvent<SyncWorkerMessage>) => {
   if (event.data.type === "WAKE_UP") {
+    if (
+      typeof self !== "undefined" &&
+      self.navigator &&
+      self.navigator.onLine
+    ) {
+      resetCircuitBreaker();
+    }
     processOutbox().catch(console.error);
   }
 });
